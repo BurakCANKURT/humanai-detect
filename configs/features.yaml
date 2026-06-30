@@ -1,0 +1,39 @@
+# 30+ stilometrik metrik icin ac/kapat bayraklari (PDF bolum 2 - YONTEM ile hizali)
+
+lexical:
+  type_token_ratio: true
+  hapax_legomena_ratio: true
+  mean_word_length: true
+  word_length_std: true
+  vocabulary_richness_yule_k: true
+
+syntactic:
+  mean_dependency_depth: true
+  dependency_depth_std: true
+  pos_distribution: true
+  syntactic_depth_shift: true
+
+statistical:
+  ngram_entropy:
+    enabled: true
+    orders: [1, 2, 3]
+  kl_divergence_word_freq: true
+  perplexity: true
+  burstiness_index: true
+  token_entropy_drop: true
+
+discourse:
+  conjunction_density: true
+  conjunction_deviation_index: true
+  function_word_ratio: true
+
+sentence_level:
+  sentence_length_mean: true
+  sentence_length_variance: true
+
+readability:
+  atesman: true
+  bezirci_yilmaz: true
+
+anomaly:
+  stylometric_anomaly_heatmap: true

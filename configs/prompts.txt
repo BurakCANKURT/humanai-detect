@@ -1,0 +1,20 @@
+# LLM ile ham-AI (ai_raw) metin uretimi icin konu/prompt listesi.
+# Her satir bir prompt'tur; "#" ile baslayan satirlar ve bos satirlar yok sayilir.
+# Insan korpusuyla (akademik makale/tez) konu dagilimini esleştirmek icin
+# cesitli disiplinlerden akademik tarzda konular secildi. Ihtiyaca gore genislet.
+
+Yapay zeka destekli metin uretiminin akademik yazimdaki etik boyutlarini tartisan bir makale bolumu yaz.
+Iklim degisikliginin Turkiye tarim sektorune etkilerini ozetleyen bir literatur taramasi yaz.
+Derin ogrenme tabanli goruntu siniflandirma yontemlerinin karsilastirmali bir degerlendirmesini yaz.
+Surdurulebilir enerji kaynaklarinin sehir planlamasina entegrasyonu hakkinda bir giris bolumu yaz.
+Turkce dogal dil isleme alaninda kullanilan kaynak yetersizligi problemlerini aciklayan bir metin yaz.
+Sosyal medyanin genc yetiskinlerin ruh sagligi uzerindeki etkilerini inceleyen bir ozet yaz.
+Blok zinciri teknolojisinin tedarik zinciri yonetiminde kullanim alanlarini aciklayan bir bolum yaz.
+Mikroplastiklerin deniz ekosistemleri uzerindeki etkilerine dair guncel bulgulari ozetleyen bir metin yaz.
+Uzaktan egitimin yuksek ogretimde ogrenci basarisina etkisini degerlendiren bir tartisma bolumu yaz.
+Kuantum hesaplamanin kriptografi uzerindeki olasi etkilerini aciklayan bir giris yaz.
+Yapay zeka tabanli teshis sistemlerinin saglik hizmetlerinde kullanimina dair bir literatur ozeti yaz.
+Akilli sehir uygulamalarinin enerji verimliligine katkisini tartisan bir bolum yaz.
+Goc ve kentlesmenin Turkiye'deki konut politikalarina etkisini inceleyen bir analiz yaz.
+Otonom araclarda kullanilan sensor fuzyonu yontemlerini karsilastiran bir teknik ozet yaz.
+Biyocesitlilik kaybinin ekosistem hizmetleri uzerindeki etkilerini aciklayan bir bolum yaz.

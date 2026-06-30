@@ -1,0 +1,181 @@
+"""GPT-4 / Gemini / Claude / Llama / HuggingFace Transformers ile ham yapay metin uretimi.
+
+Hangi saglayicinin aktif oldugu configs/data_sources.yaml -> llm_generators.*.enabled
+alaninda belirtilir; API key'ler .env'den (config.get_api_key) okunur.
+"""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import Any
+
+from tenacity import Retrying, stop_after_attempt, wait_exponential
+
+from .schemas import RawSample
+
+_HF_PIPELINE_CACHE: dict[str, Any] = {}
+
+
+def load_prompts(path: Path) -> list[str]:
+    """configs/prompts.txt'den yorum/bos satirlari atlayarak prompt listesi okur."""
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+
+
+def generate_with_openai(prompt: str, model: str, api_key: str) -> str:
+    """OpenAI (GPT-4) ile tek bir metin uretir."""
+    from openai import OpenAI
+
+    client = OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content or ""
+
+
+def generate_with_gemini(prompt: str, model: str, api_key: str) -> str:
+    """Google Gemini ile tek bir metin uretir."""
+    from google import genai
+
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(model=model, contents=prompt)
+    return response.text or ""
+
+
+def generate_with_anthropic(prompt: str, model: str, api_key: str) -> str:
+    """Anthropic Claude ile tek bir metin uretir."""
+    from anthropic import Anthropic
+
+    client = Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model=model,
+        max_tokens=2048,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.content[0].text
+
+
+def generate_with_llama(prompt: str, model: str, endpoint: str, api_key: str | None = None) -> str:
+    """Yerel/self-hosted bir LLM (orn. Ollama) ile OpenAI-uyumlu chat-completions endpoint'i uzerinden metin uretir.
+
+    Ollama icin endpoint tipik olarak http://localhost:11434/v1/chat/completions, api_key
+    gerekmez (lokal calisir, ucretsizdir, API kota/kapasite sorunlarindan bagimsizdir).
+    """
+    import httpx
+
+    response = httpx.post(
+        endpoint,
+        headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+        json={"model": model, "messages": [{"role": "user", "content": prompt}]},
+        timeout=300,
+    )
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
+
+
+def _get_hf_pipeline(model_id: str, device: str, load_in_4bit: bool) -> Any:
+    """HuggingFace pipeline'ini yukler; ayni model tekrar tekrar yuklenmez."""
+    cache_key = f"{model_id}|{device}|{load_in_4bit}"
+    if cache_key in _HF_PIPELINE_CACHE:
+        return _HF_PIPELINE_CACHE[cache_key]
+
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+
+    print(f"[transformers] Model yukleniyor: {model_id} (load_in_4bit={load_in_4bit})...")
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+
+    if load_in_4bit:
+        from transformers import BitsAndBytesConfig
+        bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
+        model = AutoModelForCausalLM.from_pretrained(model_id, quantization_config=bnb, device_map=device)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, device_map=device)
+
+    pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
+    _HF_PIPELINE_CACHE[cache_key] = pipe
+    print(f"[transformers] Model hazir: {model_id}")
+    return pipe
+
+
+def generate_with_transformers(
+    prompt: str,
+    model_id: str,
+    device: str = "auto",
+    load_in_4bit: bool = True,
+) -> str:
+    """HuggingFace Transformers ile metin uretir (Colab/GPU ortami icin, kota yok)."""
+    pipe = _get_hf_pipeline(model_id, device, load_in_4bit)
+    messages = [{"role": "user", "content": prompt}]
+    outputs = pipe(messages, max_new_tokens=1024, do_sample=True, temperature=0.7,
+                   pad_token_id=pipe.tokenizer.eos_token_id)
+    return outputs[0]["generated_text"][-1]["content"]
+
+
+_GENERATORS = {
+    "openai": generate_with_openai,
+    "gemini": generate_with_gemini,
+    "anthropic": generate_with_anthropic,
+    "llama": generate_with_llama,
+    "transformers": generate_with_transformers,
+}
+
+
+def generate_batch(
+    prompts: list[str],
+    provider: str,
+    target_count: int,
+    rate_limit: dict | None = None,
+    checkpoint_path: Path | None = None,
+    start_index: int = 0,
+    **provider_kwargs: str,
+) -> list[RawSample]:
+    """Belirtilen saglayici ile toplu ham-AI metin uretir ve RawSample listesine cevirir.
+
+    checkpoint_path verilirse her ornek uretilir uretilmez dosyaya eklenir (kesintide kayip olmaz).
+    start_index ile onceki bir calismanin kaldigi yerden devam edilebilir.
+    provider_kwargs, secilen saglayicinin generate_with_* fonksiyonuna gerekli
+    diger parametreleri (model/api_key veya endpoint/api_key) tasir.
+    """
+    import json
+    from dataclasses import asdict as _asdict
+
+    if not prompts:
+        raise ValueError("prompts listesi bos olamaz")
+    generate_fn = _GENERATORS[provider]
+    rate_limit = rate_limit or {}
+    max_retries = rate_limit.get("max_retries", 3)
+    requests_per_minute = rate_limit.get("requests_per_minute", 60)
+    min_interval = 60.0 / requests_per_minute if requests_per_minute else 0.0
+
+    retryer = Retrying(stop=stop_after_attempt(max_retries), wait=wait_exponential(multiplier=1, max=30))
+
+    if checkpoint_path:
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    samples: list[RawSample] = []
+    for i in range(start_index, start_index + target_count):
+        local_i = i - start_index + 1
+        print(f"  [{local_i}/{target_count}] {provider}: istek gonderiliyor (prompt #{i % len(prompts) + 1})...", flush=True)
+        prompt = prompts[i % len(prompts)]
+        text = retryer(generate_fn, prompt, **provider_kwargs).strip()
+        if text:
+            sample = RawSample(
+                id=f"ai_raw_{provider}_{i:04d}",
+                text=text,
+                label="ai_raw",
+                source=provider,
+                metadata={"prompt": prompt, "model": provider_kwargs.get("model", "")},
+            )
+            samples.append(sample)
+            if checkpoint_path:
+                with open(checkpoint_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(_asdict(sample), ensure_ascii=False) + "\n")
+            print(f"  [{local_i}/{target_count}] tamam — {len(text)} karakter yazildi (id={sample.id})", flush=True)
+        else:
+            print(f"  [{local_i}/{target_count}] UYARI: bos yanit, atlaniyor.", flush=True)
+        if min_interval and local_i < target_count:
+            time.sleep(min_interval)
+    return samples

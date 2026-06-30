@@ -1,0 +1,9 @@
+tokenizer_lib: stanza   # stanza | spacy
+spacy_model: tr_core_news_lg
+stanza_lang: tr
+
+min_tokens: 30
+max_tokens: 2000
+lowercase: false
+
+perplexity_model_id: dbmdz/bert-base-turkish-cased

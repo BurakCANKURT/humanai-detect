@@ -1,0 +1,24 @@
+hpo:
+  study_name: humanai_detect_hpo
+  n_trials: 100
+  sampler: tpe
+  pruner: median
+  direction: maximize
+  metric: macro_f1
+  timeout_sec: null
+
+evaluation:
+  cv_folds: 5
+  stratified: true
+  metrics: [accuracy, macro_f1, per_class_f1, roc_auc_ovr, confusion_matrix]
+  target_thresholds:
+    accuracy: 0.90
+    macro_f1: 0.85
+    humanized_class_f1: 0.80
+
+  umap:
+    n_neighbors: 15
+    min_dist: 0.1
+    n_components: 2
+
+  figure_dpi: 300

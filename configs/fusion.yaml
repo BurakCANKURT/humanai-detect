@@ -1,0 +1,15 @@
+scaler: zscore          # zscore | robust
+
+vif:
+  threshold: 10.0
+
+mutual_info:
+  top_k: 50
+
+clustering:
+  method: cosine_distance
+  eps: 0.2
+
+embedding_dim_reduction:
+  method: none           # none | pca
+  n_components: 128

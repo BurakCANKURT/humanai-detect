@@ -1,0 +1,84 @@
+# API key'ler buraya yazilmaz; sadece .env'den okunur (bkz. .env.example).
+# Bu dosyada sadece hangi saglayicinin aktif oldugu ve model adi belirtilir.
+
+# YOK Tez Merkezi arama sayfasi bot-dogrulama (CAPTCHA) ile korunuyor, bu nedenle
+# otomatik kazima yapilmiyor. Google Scholar ve tez dosyalari elle indirilip
+# data/external/<source>/ klasorune konur, kod bu klasoru okuyup RawSample'a cevirir.
+human:
+  sources: [google_scholar, yok_tez, manual_corpus]
+  target_count: 3000
+  external_subdirs:
+    google_scholar: google_scholar
+    yok_tez: yok_tez
+    manual_corpus: manual_corpus
+
+llm_generators:
+  prompts_file: configs/prompts.txt
+  openai:
+    enabled: false  # OPENAI_API_KEY .env'de bos; anahtar eklenince true yapilabilir
+    model: gpt-4-turbo
+    api_key_env: OPENAI_API_KEY
+  gemini:
+    enabled: false  # ucretsiz katman kota/kapasite sorunlari surekli oldugu icin kapatildi, llama (Ollama) kullaniliyor
+    model: gemini-2.5-flash
+    api_key_env: GEMINI_API_KEY
+  anthropic:
+    enabled: false  # ANTHROPIC_API_KEY .env'de bos; anahtar eklenince true yapilabilir
+    model: claude-3-5-sonnet
+    api_key_env: ANTHROPIC_API_KEY
+  llama:
+    enabled: false  # Ollama kaldirildi, transformers saglayicisi kullaniliyor
+    model: qwen2.5:7b
+    endpoint_env: LLAMA_ENDPOINT
+    api_key_env: LLAMA_API_KEY
+  transformers:
+    enabled: true   # Colab T4/A100 GPU ile calisir, kota/endpoint gerektirmez
+    model: Qwen/Qwen2.5-7B-Instruct
+    device: auto
+    load_in_4bit: true
+
+# QuillBot/Wordtune/ParrotAI'nin genel kullanima acik bir API'si yok; ham-AI metinler
+# bu araclarin web arayuzunde elle "humanize" edilip data/external/<external_subdir>/
+# altina <sample_id>.txt olarak kaydedilir; kod bu klasoru okuyup orijinal ai_raw
+# ornegiyle id'den eslestirir. Varsayilan olarak kapali (asagidaki llm.gemini ile
+# otomatik humanize kullaniliyor); manuel humanize denenirse enabled: true yapilabilir.
+humanizers:
+  quillbot:
+    enabled: false
+    external_subdir: humanized/quillbot
+  wordtune:
+    enabled: false
+    external_subdir: humanized/wordtune
+  parrotai:
+    enabled: false
+    external_subdir: humanized/parrotai
+  llm:
+    gemini:
+      enabled: false  # ucretsiz katman kota/kapasite sorunlari surekli oldugu icin kapatildi
+      model: gemini-2.5-flash
+      api_key_env: GEMINI_API_KEY
+    llama:
+      enabled: false  # Ollama kaldirildi
+      model: qwen2.5:7b
+      endpoint_env: LLAMA_ENDPOINT
+      api_key_env: LLAMA_API_KEY
+    transformers:
+      enabled: true   # Colab T4/A100 GPU ile calisir
+      model: Qwen/Qwen2.5-7B-Instruct
+      device: auto
+      load_in_4bit: true
+
+# manual_corpus icin scraping yerine acik lisansli (CC BY-SA), hazir bir Turkce
+# korpus (Vikipedi dump'i, Hugging Face uzerinden) indirilir. CAPTCHA/ToS riski yok.
+corpus_download:
+  wikipedia_tr:
+    dataset_name: wikimedia/wikipedia
+    dataset_config: "20231101.tr"
+    target_count: 1000
+
+target_count_per_class: 24  # pipeline'i 3 sinifla test etmek icin kucuk parti; once asama 2+ dogrulanip sonra 3000'e cikarilacak
+
+rate_limit:
+  requests_per_minute: 60
+  max_retries: 3
+  backoff: exponential

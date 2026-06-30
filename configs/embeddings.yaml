@@ -1,0 +1,19 @@
+models:
+  berturk:
+    model_id: dbmdz/bert-base-turkish-cased
+    enabled: true
+  roberta_turkish:
+    model_id: loodos/roberta-base-turkish-mc4
+    enabled: false  # ilk calistirmada kapatik; BERTurk yeterliyse acmaya gerek yok (VRAM)
+
+pooling: cls          # cls | mean | max
+max_length: 512
+batch_size: 16
+device: auto           # auto | cpu | cuda
+
+cache_enabled: true
+cache_format: npy
+cache_dir: data/processed/embedding_cache
+
+anisotropy:
+  compute: true

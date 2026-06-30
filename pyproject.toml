@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "humanai-detect"
+version = "0.1.0"
+description = "Insanlastirilmis (Humanized) Yapay Metinlerin Tespiti - stilometri + transformer hibrit uc sinifli model"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "pyarrow",
+    "transformers",
+    "torch",
+    "datasets",
+    "sentencepiece",
+    "spacy",
+    "stanza",
+    "statsmodels",
+    "xgboost",
+    "catboost",
+    "optuna",
+    "shap",
+    "matplotlib",
+    "seaborn",
+    "umap-learn",
+    "python-dotenv",
+    "pyyaml",
+    "openai",
+    "anthropic",
+    "google-genai",
+    "httpx",
+    "tenacity",
+    "tqdm",
+    "pdfplumber",
+    "python-docx",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "ruff"]
+colab = ["bitsandbytes>=0.43", "accelerate>=0.27"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

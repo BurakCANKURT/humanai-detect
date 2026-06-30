@@ -1,0 +1,196 @@
+"""Asama 3+4: stilometrik ozellik cikarimi + transformer embedding.
+
+Girdi : data/interim/{label}/{label}.jsonl  (ProcessedSample'lar)
+Cikti :
+  data/processed/stylometric.parquet         — ~30 stilometrik ozellik + id + label
+  data/processed/embeddings_berturk.parquet  — [N, 768] BERTurk vektorleri
+  data/processed/embeddings_roberta.parquet  — [N, 768] RoBERTa-TR vektorleri
+
+Her ornek icin features.aggregator.extract_all_features() calisir.
+Referans istatistikleri (KL div, depth shift, conjunction deviation) insan
+egitim kumesinden hesaplanip diger siniflar icin yeniden kullanilir.
+Embedding ciktisi --skip-embeddings bayragi ile atlanabilir (Stanza modeli yoksa).
+"""
+
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+
+import pandas as pd
+
+from humanai_detect.config import PROJECT_ROOT, load_yaml
+from humanai_detect.features.aggregator import extract_all_features
+from humanai_detect.preprocessing.schemas import ProcessedSample
+from humanai_detect.utils.io import read_jsonl, write_parquet
+
+LABELS = ["human", "ai_raw", "ai_humanized"]
+
+
+def _load_samples(interim_dir, label: str) -> list[ProcessedSample]:
+    path = interim_dir / label / f"{label}.jsonl"
+    if not path.exists():
+        return []
+    return [ProcessedSample(**r) for r in read_jsonl(path)]
+
+
+def _build_reference(human_samples: list[ProcessedSample]) -> dict:
+    """Insan egitim kumesinden referans istatistiklerini hesaplar."""
+    if not human_samples:
+        return {}
+    all_tokens: list[str] = []
+    dep_depths: list[float] = []
+    conj_densities: list[float] = []
+
+    for s in human_samples:
+        all_tokens.extend(s.tokens)
+        from humanai_detect.features.syntactic import _word_depths
+        from humanai_detect.features.discourse import conjunction_density
+
+        if s.dep_parse:
+            dep_depths.extend(_word_depths(s.dep_parse))
+        conj_densities.append(conjunction_density(s.tokens, s.pos_tags))
+
+    import statistics
+    total = len(all_tokens)
+    counts = Counter(all_tokens)
+    return {
+        "word_freqs": {w: c / total for w, c in counts.items()},
+        "mean_dep_depth": statistics.mean(dep_depths) if dep_depths else 0.0,
+        "conjunction_density": statistics.mean(conj_densities) if conj_densities else 0.0,
+    }
+
+
+def _embed_all(
+    samples: list[ProcessedSample],
+    model_key: str,
+    emb_cfg: dict,
+    paths_cfg: dict,
+    processed_dir,
+) -> None:
+    """Tum ornekler icin embedding hesaplar ve parquet olarak kaydeder."""
+    from humanai_detect.embeddings.berturk import embed_berturk
+    from humanai_detect.embeddings.roberta_tr import embed_roberta_tr
+
+    model_cfg = emb_cfg["models"][model_key]
+    if not model_cfg.get("enabled", True):
+        return
+
+    model_id = model_cfg["model_id"]
+    pooling = emb_cfg.get("pooling", "cls")
+    max_length = emb_cfg.get("max_length", 512)
+    batch_size = emb_cfg.get("batch_size", 16)
+    device = emb_cfg.get("device", "auto")
+
+    cache_dir = None
+    if emb_cfg.get("cache_enabled"):
+        cache_dir = PROJECT_ROOT / paths_cfg.get("processed_dir", "data/processed") / emb_cfg.get("cache_dir", "embedding_cache") / model_key
+
+    embed_fn = embed_berturk if model_key == "berturk" else embed_roberta_tr
+    out_path = processed_dir / f"embeddings_{model_key}.parquet"
+
+    if out_path.exists():
+        print(f"[{model_key}] {out_path} zaten mevcut, atlanıyor.")
+        return
+
+    print(f"[{model_key}] {len(samples)} metin icin embedding hesaplaniyor ({model_id})...")
+    texts = [s.cleaned_text for s in samples]
+    emb_matrix = embed_fn(
+        texts, model_id=model_id, pooling=pooling,
+        max_length=max_length, batch_size=batch_size,
+        device=device, cache_dir=cache_dir,
+    )
+
+    dim_cols = {f"dim_{i}": emb_matrix[:, i] for i in range(emb_matrix.shape[1])}
+    df_emb = pd.DataFrame({
+        "sample_id": [s.id for s in samples],
+        "label": [s.label for s in samples],
+        **dim_cols,
+    })
+    write_parquet(df_emb, out_path)
+    print(f"[{model_key}] {len(df_emb)} ornek, {emb_matrix.shape[1]} boyut -> {out_path}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input-dir", default=None)
+    parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--skip-embeddings", action="store_true",
+                        help="Embedding adimini atla (sadece stilometrik ozellikler)")
+    args = parser.parse_args()
+
+    paths_cfg = load_yaml("paths")
+    features_cfg = load_yaml("features")
+    emb_cfg = load_yaml("embeddings")
+
+    interim_dir = PROJECT_ROOT / (args.input_dir or paths_cfg["interim_dir"])
+    processed_dir = PROJECT_ROOT / (args.output_dir or paths_cfg["processed_dir"])
+    processed_dir.mkdir(parents=True, exist_ok=True)
+
+    # Referans istatistiklerini insan kumesinden hesapla
+    print("[build_features] insan kumesi referans istatistikleri hesaplaniyor...")
+    human_samples = _load_samples(interim_dir, "human")
+    reference = _build_reference(human_samples)
+    print(f"  referans hazir ({len(human_samples)} insan ornegi)")
+
+    # --- Asama 3: Stilometrik ozellikler ---
+    all_samples: list[ProcessedSample] = []
+    rows: list[dict] = []
+    for label in LABELS:
+        samples = _load_samples(interim_dir, label)
+        if not samples:
+            print(f"[{label}] veri yok, atlanıyor.")
+            continue
+        all_samples.extend(samples)
+        print(f"[{label}] {len(samples)} ornek icin ozellik cikarimi basliyor...")
+        for i, sample in enumerate(samples, 1):
+            feats = extract_all_features(sample, features_cfg, reference=reference)
+            feats["sample_id"] = sample.id
+            feats["label"] = sample.label
+            rows.append(feats)
+            if i % 10 == 0 or i == len(samples):
+                print(f"  [{i}/{len(samples)}] {label}", flush=True)
+
+    if not rows:
+        print("[build_features] hicbir ornek islenmedi.")
+        return
+
+    df = pd.DataFrame(rows)
+    cols = ["sample_id", "label"] + [c for c in df.columns if c not in ("sample_id", "label")]
+    df = df[cols]
+    out_path = processed_dir / "stylometric.parquet"
+    write_parquet(df, out_path)
+    print(f"[stilometri] {len(df)} ornek, {len(df.columns)-2} ozellik -> {out_path}")
+
+    # --- Asama 4: Embedding ---
+    if not args.skip_embeddings and all_samples:
+        for model_key in emb_cfg.get("models", {}):
+            _embed_all(all_samples, model_key, emb_cfg, paths_cfg, processed_dir)
+
+    # --- Asama 5: Early Fusion ---
+    fused_path = processed_dir / "fused.parquet"
+    sty_path = processed_dir / "stylometric.parquet"
+    if not sty_path.exists():
+        print("[fusion] stylometric.parquet bulunamadi, fusion atlandi.")
+        return
+
+    from humanai_detect.fusion.early_fusion import build_fused_dataframe
+    from humanai_detect.utils.io import read_parquet
+
+    fusion_cfg = load_yaml("fusion")
+    sty_df = pd.read_parquet(sty_path)
+
+    emb_named: list[tuple[str, pd.DataFrame]] = []
+    for model_key in emb_cfg.get("models", {}):
+        emb_path = processed_dir / f"embeddings_{model_key}.parquet"
+        if emb_path.exists():
+            emb_named.append((model_key, pd.read_parquet(emb_path)))
+
+    fused_df = build_fused_dataframe(sty_df, emb_named, fusion_cfg)
+    write_parquet(fused_df, fused_path)
+    n_feat = len(fused_df.columns) - 2
+    print(f"[fusion] {len(fused_df)} ornek, {n_feat} toplam ozellik -> {fused_path}")
+
+
+if __name__ == "__main__":
+    main()
