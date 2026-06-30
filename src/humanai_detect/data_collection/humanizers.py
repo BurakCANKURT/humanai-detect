@@ -110,6 +110,75 @@ _LLM_HUMANIZERS = {
     "transformers": humanize_with_transformers,
 }
 
+_LOCAL_PROVIDERS = frozenset({"transformers", "llama"})
+
+
+def _humanize_batch_transformers(
+    ai_raw_samples: list[RawSample],
+    provider: str,
+    start_index: int,
+    checkpoint_path: Path | None,
+    batch_size: int = 8,
+    model_id: str = "Qwen/Qwen2.5-7B-Instruct",
+    device: str = "auto",
+    load_in_4bit: bool = True,
+) -> list[RawSample]:
+    """Transformers pipeline ile batch GPU inference yaparak humanize eder."""
+    from dataclasses import asdict
+    from .llm_generators import _get_hf_pipeline
+
+    pipe = _get_hf_pipeline(model_id, device, load_in_4bit)
+    if checkpoint_path:
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    samples_to_process = ai_raw_samples[start_index:]
+    total = len(samples_to_process)
+    n_batches = (total + batch_size - 1) // batch_size
+    samples: list[RawSample] = []
+
+    for b in range(n_batches):
+        batch = samples_to_process[b * batch_size : (b + 1) * batch_size]
+        messages_batch = [
+            [{"role": "user", "content": _HUMANIZE_PROMPT_TEMPLATE.format(text=s.text)}]
+            for s in batch
+        ]
+        print(f"  [batch {b+1}/{n_batches}] {len(batch)} ornek humanize ediliyor...", flush=True)
+
+        outputs = pipe(
+            messages_batch,
+            max_new_tokens=512,
+            do_sample=True,
+            temperature=0.7,
+            pad_token_id=pipe.tokenizer.eos_token_id,
+            batch_size=len(batch),
+        )
+
+        for k, ai_raw_sample in enumerate(batch):
+            text = outputs[k][0]["generated_text"][-1]["content"].strip()
+            if not text:
+                print(f"  UYARI: bos yanit (ornek={ai_raw_sample.id}), atlaniyor.", flush=True)
+                continue
+            sample = RawSample(
+                id=f"ai_humanized_{provider}_{ai_raw_sample.id}",
+                text=text,
+                label="ai_humanized",
+                source=provider,
+                metadata={
+                    "original_id": ai_raw_sample.id,
+                    "original_source": ai_raw_sample.source,
+                    "model": model_id,
+                },
+            )
+            samples.append(sample)
+            if checkpoint_path is not None:
+                with checkpoint_path.open("a", encoding="utf-8") as fp:
+                    fp.write(json.dumps(asdict(sample), ensure_ascii=False) + "\n")
+
+        done = min((b + 1) * batch_size, total)
+        print(f"  [{done}/{total}] tamamlandi.", flush=True)
+
+    return samples
+
 
 def humanize_batch_llm(
     ai_raw_samples: list[RawSample],
@@ -117,7 +186,7 @@ def humanize_batch_llm(
     rate_limit: dict | None = None,
     checkpoint_path: Path | None = None,
     start_index: int = 0,
-    **provider_kwargs: str,
+    **provider_kwargs,
 ) -> list[RawSample]:
     """ai_raw orneklerini bir LLM (orn. Gemini/Ollama) ile otomatik humanize eder, manuel dosya gerektirmez.
 
@@ -125,11 +194,20 @@ def humanize_batch_llm(
     start_index     : checkpoint'ten devam ederken atlanan ornek sayisi.
     provider_kwargs : secilen saglayicinin humanize_with_* fonksiyonuna gerekli parametreler.
     """
+    # Transformers için doğrudan batch inference kullan
+    if provider == "transformers":
+        batch_size = int(provider_kwargs.pop("batch_size", 8))
+        return _humanize_batch_transformers(
+            ai_raw_samples, provider, start_index, checkpoint_path,
+            batch_size=batch_size, **provider_kwargs,
+        )
+
     humanize_fn = _LLM_HUMANIZERS[provider]
     rate_limit = rate_limit or {}
     max_retries = rate_limit.get("max_retries", 3)
     requests_per_minute = rate_limit.get("requests_per_minute", 60)
-    min_interval = 60.0 / requests_per_minute if requests_per_minute else 0.0
+    # Yerel sağlayıcılar (llama/ollama) için rate limit bekleme gereksiz
+    min_interval = 0.0 if provider in _LOCAL_PROVIDERS else (60.0 / requests_per_minute if requests_per_minute else 0.0)
     retryer = Retrying(stop=stop_after_attempt(max_retries), wait=wait_exponential(multiplier=1, max=30))
 
     total = len(ai_raw_samples)

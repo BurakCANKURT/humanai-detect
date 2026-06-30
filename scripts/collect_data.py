@@ -75,6 +75,7 @@ def collect_ai_raw(paths_cfg: dict, data_sources_cfg: dict) -> list[RawSample]:
                 "model_id": provider_cfg["model"],
                 "device": provider_cfg.get("device", "auto"),
                 "load_in_4bit": provider_cfg.get("load_in_4bit", True),
+                "batch_size": provider_cfg.get("batch_size", 8),
             }
         else:
             kwargs = {
@@ -136,6 +137,7 @@ def collect_ai_humanized(paths_cfg: dict, data_sources_cfg: dict) -> list[RawSam
                         "model_id": provider_cfg["model"],
                         "device": provider_cfg.get("device", "auto"),
                         "load_in_4bit": provider_cfg.get("load_in_4bit", True),
+                        "batch_size": provider_cfg.get("batch_size", 8),
                     }
                 else:
                     kwargs = {

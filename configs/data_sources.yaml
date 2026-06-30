@@ -35,7 +35,8 @@ llm_generators:
     enabled: true   # Colab T4/A100 GPU ile calisir, kota/endpoint gerektirmez
     model: Qwen/Qwen2.5-7B-Instruct
     device: auto
-    load_in_4bit: true
+    load_in_4bit: true  # A100 icin false yapilabilir (40 GB VRAM yeter, daha hizli)
+    batch_size: 8       # A100 icin 16'ya cikarilabilir; T4 icin 4 onerilir
 
 # QuillBot/Wordtune/ParrotAI'nin genel kullanima acik bir API'si yok; ham-AI metinler
 # bu araclarin web arayuzunde elle "humanize" edilip data/external/<external_subdir>/
@@ -66,7 +67,8 @@ humanizers:
       enabled: true   # Colab T4/A100 GPU ile calisir
       model: Qwen/Qwen2.5-7B-Instruct
       device: auto
-      load_in_4bit: true
+      load_in_4bit: true  # A100 icin false yapilabilir
+      batch_size: 8       # A100 icin 16'ya cikarilabilir; T4 icin 4 onerilir
 
 # manual_corpus icin scraping yerine acik lisansli (CC BY-SA), hazir bir Turkce
 # korpus (Vikipedi dump'i, Hugging Face uzerinden) indirilir. CAPTCHA/ToS riski yok.

@@ -16,6 +16,8 @@ from .schemas import RawSample
 
 _HF_PIPELINE_CACHE: dict[str, Any] = {}
 
+_LOCAL_PROVIDERS = frozenset({"transformers", "llama"})
+
 
 def load_prompts(path: Path) -> list[str]:
     """configs/prompts.txt'den yorum/bos satirlari atlayarak prompt listesi okur."""
@@ -123,6 +125,67 @@ _GENERATORS = {
 }
 
 
+def _generate_batch_transformers(
+    prompts: list[str],
+    provider: str,
+    target_count: int,
+    start_index: int,
+    checkpoint_path: Path | None,
+    batch_size: int = 8,
+    model_id: str = "Qwen/Qwen2.5-7B-Instruct",
+    device: str = "auto",
+    load_in_4bit: bool = True,
+) -> list[RawSample]:
+    """Transformers pipeline ile batch GPU inference yapar; A100 gibi büyük GPU'larda çok daha hızlı."""
+    import json
+    from dataclasses import asdict as _asdict
+
+    pipe = _get_hf_pipeline(model_id, device, load_in_4bit)
+    if checkpoint_path:
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    items = [(start_index + j, prompts[(start_index + j) % len(prompts)]) for j in range(target_count)]
+    total = len(items)
+    n_batches = (total + batch_size - 1) // batch_size
+    samples: list[RawSample] = []
+
+    for b in range(n_batches):
+        batch_items = items[b * batch_size : (b + 1) * batch_size]
+        messages_batch = [[{"role": "user", "content": p}] for _, p in batch_items]
+
+        print(f"  [batch {b+1}/{n_batches}] {len(batch_items)} prompt isleniyor...", flush=True)
+        outputs = pipe(
+            messages_batch,
+            max_new_tokens=512,
+            do_sample=True,
+            temperature=0.7,
+            pad_token_id=pipe.tokenizer.eos_token_id,
+            batch_size=len(batch_items),
+        )
+
+        for k, (abs_i, prompt) in enumerate(batch_items):
+            text = outputs[k][0]["generated_text"][-1]["content"].strip()
+            if not text:
+                print(f"  UYARI: bos yanit (indeks={abs_i}), atlaniyor.", flush=True)
+                continue
+            sample = RawSample(
+                id=f"ai_raw_{provider}_{abs_i:04d}",
+                text=text,
+                label="ai_raw",
+                source=provider,
+                metadata={"prompt": prompt, "model": model_id},
+            )
+            samples.append(sample)
+            if checkpoint_path:
+                with open(checkpoint_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(_asdict(sample), ensure_ascii=False) + "\n")
+
+        done = min((b + 1) * batch_size, total)
+        print(f"  [{done}/{total}] tamamlandi.", flush=True)
+
+    return samples
+
+
 def generate_batch(
     prompts: list[str],
     provider: str,
@@ -130,7 +193,7 @@ def generate_batch(
     rate_limit: dict | None = None,
     checkpoint_path: Path | None = None,
     start_index: int = 0,
-    **provider_kwargs: str,
+    **provider_kwargs,
 ) -> list[RawSample]:
     """Belirtilen saglayici ile toplu ham-AI metin uretir ve RawSample listesine cevirir.
 
@@ -144,11 +207,21 @@ def generate_batch(
 
     if not prompts:
         raise ValueError("prompts listesi bos olamaz")
+
+    # Transformers için doğrudan batch inference kullan (rate limit yok, GPU paralel)
+    if provider == "transformers":
+        batch_size = int(provider_kwargs.pop("batch_size", 8))
+        return _generate_batch_transformers(
+            prompts, provider, target_count, start_index, checkpoint_path,
+            batch_size=batch_size, **provider_kwargs,
+        )
+
     generate_fn = _GENERATORS[provider]
     rate_limit = rate_limit or {}
     max_retries = rate_limit.get("max_retries", 3)
     requests_per_minute = rate_limit.get("requests_per_minute", 60)
-    min_interval = 60.0 / requests_per_minute if requests_per_minute else 0.0
+    # Yerel sağlayıcılar (llama/ollama) için rate limit bekleme gereksiz
+    min_interval = 0.0 if provider in _LOCAL_PROVIDERS else (60.0 / requests_per_minute if requests_per_minute else 0.0)
 
     retryer = Retrying(stop=stop_after_attempt(max_retries), wait=wait_exponential(multiplier=1, max=30))
 
