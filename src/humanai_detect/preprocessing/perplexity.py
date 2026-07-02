@@ -11,19 +11,26 @@ if TYPE_CHECKING:
 _TOKENIZER: "AutoTokenizer | None" = None
 _MODEL: "AutoModelForMaskedLM | None" = None
 _LOADED_MODEL_ID: str = ""
+_DEVICE = None
 
 _MAX_LENGTH = 512   # BERT maksimum
 _CHUNK_SIZE = 64    # Her ileri geciste kac token maskelenir (bellek/hiz dengesi)
 
 
 def _get_model(model_id: str):
-    """Model ve tokenizer'i tembel yukler; model_id degisirse yeniden yukler."""
-    global _TOKENIZER, _MODEL, _LOADED_MODEL_ID
+    """Model ve tokenizer'i tembel yukler; model_id degisirse yeniden yukler.
+
+    Model, varsa GPU'ya tasinir -- aksi halde (CUDA yoksa) sessizce CPU'da kalir.
+    Bu tasima olmadan Colab GPU ortaminda bile hesaplama CPU hizinda kalirdi.
+    """
+    global _TOKENIZER, _MODEL, _LOADED_MODEL_ID, _DEVICE
     if _MODEL is None or _LOADED_MODEL_ID != model_id:
+        import torch
         from transformers import AutoModelForMaskedLM, AutoTokenizer
 
+        _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         _TOKENIZER = AutoTokenizer.from_pretrained(model_id)
-        _MODEL = AutoModelForMaskedLM.from_pretrained(model_id)
+        _MODEL = AutoModelForMaskedLM.from_pretrained(model_id).to(_DEVICE)
         _MODEL.eval()
         _LOADED_MODEL_ID = model_id
     return _TOKENIZER, _MODEL
@@ -49,7 +56,7 @@ def compute_perplexity(text: str, model_id: str) -> float:
         max_length=_MAX_LENGTH,
         add_special_tokens=True,
     )
-    input_ids = encoding["input_ids"]          # [1, seq_len]
+    input_ids = encoding["input_ids"].to(_DEVICE)          # [1, seq_len]
     seq_len = input_ids.size(1)
 
     # [CLS] ve [SEP] tokenlarini atla (indeks 0 ve seq_len-1)
