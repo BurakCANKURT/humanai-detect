@@ -120,13 +120,15 @@ def process_sample(
     )
 
 
-def process_label(label: str, input_dir, output_dir, preprocessing_cfg: dict) -> None:
+def process_label(label: str, input_dir, output_dir, preprocessing_cfg: dict, limit: int | None = None) -> None:
     in_path = input_dir / label / f"{label}.jsonl"
     if not in_path.exists():
         print(f"[{label}] {in_path} bulunamadi, atlanıyor.")
         return
 
     raw_samples = [RawSample(**r) for r in read_jsonl(in_path)]
+    if limit is not None:
+        raw_samples = raw_samples[:limit]
     print(f"[{label}] {len(raw_samples)} ornek yuklendi.")
 
     out_path = output_dir / label / f"{label}.jsonl"
@@ -142,6 +144,8 @@ def process_label(label: str, input_dir, output_dir, preprocessing_cfg: dict) ->
 
     skipped = 0
     for i, raw in enumerate(raw_samples, 1):
+        if limit is not None and len(done_ids) >= limit:
+            break
         if raw.id in done_ids:
             continue
         print(f"  [{i}/{len(raw_samples)}] {raw.id} isleniyor...", flush=True)
@@ -154,6 +158,7 @@ def process_label(label: str, input_dir, output_dir, preprocessing_cfg: dict) ->
             with out_path.open("a", encoding="utf-8") as fp:
                 import json
                 fp.write(json.dumps(asdict(result), ensure_ascii=False) + "\n")
+            done_ids.add(raw.id)
 
     total_written = sum(1 for _ in read_jsonl(out_path))
     print(f"[{label}] {total_written} ornek hazir ({skipped} atildi) -> {out_path}")
@@ -169,6 +174,7 @@ def main() -> None:
     )
     parser.add_argument("--input-dir", default=None, help="data/raw dizini (varsayilan: configs/paths.yaml)")
     parser.add_argument("--output-dir", default=None, help="data/interim dizini (varsayilan: configs/paths.yaml)")
+    parser.add_argument("--limit", type=int, default=None, help="Sinif basina en fazla kac ornek islenecek (hizli pilot/benchmark icin)")
     args = parser.parse_args()
 
     paths_cfg = load_yaml("paths")
@@ -179,7 +185,7 @@ def main() -> None:
 
     labels = LABELS if args.label == "all" else [args.label]
     for label in labels:
-        process_label(label, input_dir, output_dir, preprocessing_cfg)
+        process_label(label, input_dir, output_dir, preprocessing_cfg, limit=args.limit)
 
 
 if __name__ == "__main__":
