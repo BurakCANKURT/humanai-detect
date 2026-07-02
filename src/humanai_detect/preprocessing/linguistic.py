@@ -15,6 +15,7 @@ def _get_nlp() -> "_stanza_type.Pipeline":
     global _NLP
     if _NLP is None:
         import stanza
+        import torch
 
         # Model zaten indirildiyse GitHub kontrolu atlaniyor (ag kesintisine karsi)
         try:
@@ -25,7 +26,7 @@ def _get_nlp() -> "_stanza_type.Pipeline":
         _NLP = stanza.Pipeline(
             "tr",
             processors="tokenize,pos,lemma,depparse",
-            use_gpu=False,
+            use_gpu=torch.cuda.is_available(),
             verbose=False,
         )
     return _NLP
