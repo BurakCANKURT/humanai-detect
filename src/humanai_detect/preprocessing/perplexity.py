@@ -14,7 +14,7 @@ _LOADED_MODEL_ID: str = ""
 _DEVICE = None
 
 _MAX_LENGTH = 512   # BERT maksimum
-_CHUNK_SIZE = 64    # Her ileri geciste kac token maskelenir (bellek/hiz dengesi)
+_CHUNK_SIZE = 128   # Her ileri geciste kac token maskelenir (bellek/hiz dengesi)
 
 
 def _get_model(model_id: str):
@@ -83,8 +83,11 @@ def compute_perplexity(text: str, model_id: str) -> float:
             batch = input_ids.repeat(c, 1)          # [c, seq_len]
             batch[row_idx, chunk_idx] = mask_id     # her satirda bir token maskele
 
-            logits = model(batch).logits            # [c, seq_len, vocab]
-            token_logits = logits[row_idx, chunk_idx]           # [c, vocab]
+            # T4 gibi GPU'larda FP16 (autocast) FP32'ye gore kat kat hizli;
+            # CPU'da autocast'in etkisi yok (enabled=False).
+            with torch.autocast(device_type=_DEVICE.type, dtype=torch.float16, enabled=(_DEVICE.type == "cuda")):
+                logits = model(batch).logits        # [c, seq_len, vocab]
+            token_logits = logits[row_idx, chunk_idx].float()   # [c, vocab]
             log_probs = torch.log_softmax(token_logits, dim=-1)
 
             true_chunk = true_ids[chunk_start : chunk_start + _CHUNK_SIZE]  # [c]
