@@ -60,27 +60,34 @@ def compute_perplexity(text: str, model_id: str) -> float:
     seq_len = input_ids.size(1)
 
     # [CLS] ve [SEP] tokenlarini atla (indeks 0 ve seq_len-1)
-    content_indices = list(range(1, seq_len - 1))
-    if not content_indices:
+    content_indices = torch.arange(1, seq_len - 1, device=_DEVICE)
+    n = content_indices.numel()
+    if n == 0:
         return float("inf")
 
-    total_log_prob = 0.0
     mask_id = tokenizer.mask_token_id
+    true_ids = input_ids[0, content_indices]  # [n] -- GPU'da kalir, .item() yok
 
+    total_log_prob = torch.zeros((), device=_DEVICE)
+
+    # NOT: Onceki surum her token icin .item() ile tek tek GPU<->CPU senkronizasyonu
+    # yapiyordu (yuzlerce senkron nokta/ornek) -- bu GPU'da bile CPU hizina yakin
+    # kalmasina sebep oluyordu. Burada maskeleme ve sonuc cikarma tamamen tensor
+    # islemleriyle (fancy indexing) yapiliyor, dongu icinde tek bir .item() yok.
     with torch.no_grad():
-        for chunk_start in range(0, len(content_indices), _CHUNK_SIZE):
-            chunk = content_indices[chunk_start : chunk_start + _CHUNK_SIZE]
-            # Her satirda bir token maskeli olan batch olustur
-            batch = input_ids.repeat(len(chunk), 1)  # [chunk, seq_len]
-            true_ids = []
-            for row, idx in enumerate(chunk):
-                true_ids.append(input_ids[0, idx].item())
-                batch[row, idx] = mask_id
+        for chunk_start in range(0, n, _CHUNK_SIZE):
+            chunk_idx = content_indices[chunk_start : chunk_start + _CHUNK_SIZE]  # [c]
+            c = chunk_idx.numel()
+            row_idx = torch.arange(c, device=_DEVICE)
 
-            logits = model(batch).logits  # [chunk, seq_len, vocab]
-            for row, idx in enumerate(chunk):
-                log_probs = torch.log_softmax(logits[row, idx], dim=-1)
-                total_log_prob += log_probs[true_ids[row]].item()
+            batch = input_ids.repeat(c, 1)          # [c, seq_len]
+            batch[row_idx, chunk_idx] = mask_id     # her satirda bir token maskele
 
-    n = len(content_indices)
-    return math.exp(-total_log_prob / n)
+            logits = model(batch).logits            # [c, seq_len, vocab]
+            token_logits = logits[row_idx, chunk_idx]           # [c, vocab]
+            log_probs = torch.log_softmax(token_logits, dim=-1)
+
+            true_chunk = true_ids[chunk_start : chunk_start + _CHUNK_SIZE]  # [c]
+            total_log_prob += log_probs[row_idx, true_chunk].sum()
+
+    return math.exp(-total_log_prob.item() / n)
