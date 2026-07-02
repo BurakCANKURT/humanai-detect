@@ -14,7 +14,7 @@ _LOADED_MODEL_ID: str = ""
 _DEVICE = None
 
 _MAX_LENGTH = 512   # BERT maksimum
-_CHUNK_SIZE = 128   # Her ileri geciste kac token maskelenir (bellek/hiz dengesi)
+_CHUNK_SIZE = 32    # Her ileri geciste kac token maskelenir (bellek/hiz dengesi)
 
 
 def _get_model(model_id: str):
