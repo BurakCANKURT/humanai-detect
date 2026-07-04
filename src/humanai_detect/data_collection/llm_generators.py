@@ -6,6 +6,7 @@ alaninda belirtilir; API key'ler .env'den (config.get_api_key) okunur.
 
 from __future__ import annotations
 
+import random
 import time
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,27 @@ from .schemas import RawSample
 _HF_PIPELINE_CACHE: dict[str, Any] = {}
 
 _LOCAL_PROVIDERS = frozenset({"transformers", "llama"})
+
+# Insan (dergipark) korpusundaki islenmis kelime sayisi dagilimina (ort. 615,
+# std 96.4) yaklasmak icin: uzunluk tek basina siniflari %71 macro-F1 ile
+# ayirt edebiliyordu (bkz. proje notlari), bu yuzden AI uretimi de benzer bir
+# hedef kelime araligina rastgele yonlendirilir.
+_TARGET_LEN_MEAN = 605
+_TARGET_LEN_STD = 150
+_TARGET_LEN_MIN = 200
+_TARGET_LEN_MAX = 1200
+# Ortalama ~2.2 token/kelime (Turkce, Qwen2.5 tokenizer, gozlemlenen oran) --
+# tavan, en uzun hedefi (1200 kelime) kirpmadan karsilayacak sekilde genis tutulur.
+_MAX_NEW_TOKENS = 2800
+
+
+def _sample_target_words(rng: random.Random) -> int:
+    val = rng.gauss(_TARGET_LEN_MEAN, _TARGET_LEN_STD)
+    return int(max(_TARGET_LEN_MIN, min(_TARGET_LEN_MAX, val)))
+
+
+def _with_length_instruction(prompt: str, target_words: int) -> str:
+    return f"{prompt}\n\nMetnin uzunlugu yaklasik {target_words} kelime olsun."
 
 
 def load_prompts(path: Path) -> list[str]:
@@ -144,26 +166,33 @@ def _generate_batch_transformers(
     if checkpoint_path:
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
-    items = [(start_index + j, prompts[(start_index + j) % len(prompts)]) for j in range(target_count)]
+    rng = random.Random(42)
+    items = [
+        (start_index + j, prompts[(start_index + j) % len(prompts)], _sample_target_words(rng))
+        for j in range(target_count)
+    ]
     total = len(items)
     n_batches = (total + batch_size - 1) // batch_size
     samples: list[RawSample] = []
 
     for b in range(n_batches):
         batch_items = items[b * batch_size : (b + 1) * batch_size]
-        messages_batch = [[{"role": "user", "content": p}] for _, p in batch_items]
+        messages_batch = [
+            [{"role": "user", "content": _with_length_instruction(p, tw)}]
+            for _, p, tw in batch_items
+        ]
 
         print(f"  [batch {b+1}/{n_batches}] {len(batch_items)} prompt isleniyor...", flush=True)
         outputs = pipe(
             messages_batch,
-            max_new_tokens=512,
+            max_new_tokens=_MAX_NEW_TOKENS,
             do_sample=True,
             temperature=0.7,
             pad_token_id=pipe.tokenizer.eos_token_id,
             batch_size=len(batch_items),
         )
 
-        for k, (abs_i, prompt) in enumerate(batch_items):
+        for k, (abs_i, prompt, target_words) in enumerate(batch_items):
             text = outputs[k][0]["generated_text"][-1]["content"].strip()
             if not text:
                 print(f"  UYARI: bos yanit (indeks={abs_i}), atlaniyor.", flush=True)
@@ -173,7 +202,7 @@ def _generate_batch_transformers(
                 text=text,
                 label="ai_raw",
                 source=provider,
-                metadata={"prompt": prompt, "model": model_id},
+                metadata={"prompt": prompt, "model": model_id, "target_words": target_words},
             )
             samples.append(sample)
             if checkpoint_path:

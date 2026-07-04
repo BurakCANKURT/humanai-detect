@@ -125,7 +125,7 @@ def _humanize_batch_transformers(
 ) -> list[RawSample]:
     """Transformers pipeline ile batch GPU inference yaparak humanize eder."""
     from dataclasses import asdict
-    from .llm_generators import _get_hf_pipeline
+    from .llm_generators import _MAX_NEW_TOKENS, _get_hf_pipeline
 
     pipe = _get_hf_pipeline(model_id, device, load_in_4bit)
     if checkpoint_path:
@@ -146,7 +146,7 @@ def _humanize_batch_transformers(
 
         outputs = pipe(
             messages_batch,
-            max_new_tokens=512,
+            max_new_tokens=_MAX_NEW_TOKENS,
             do_sample=True,
             temperature=0.7,
             pad_token_id=pipe.tokenizer.eos_token_id,
