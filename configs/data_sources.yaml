@@ -78,7 +78,7 @@ corpus_download:
     dataset_config: "20231101.tr"
     target_count: 1000
 
-target_count_per_class: 24  # pipeline'i 3 sinifla test etmek icin kucuk parti; once asama 2+ dogrulanip sonra 3000'e cikarilacak
+target_count_per_class: 300  # uzunluk-duzeltmesi sonrasi pilot olcum; onaylanirsa 3000'e cikarilacak
 
 rate_limit:
   requests_per_minute: 60
