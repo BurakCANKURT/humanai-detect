@@ -15,6 +15,7 @@ altinda tanimlidir.
 from __future__ import annotations
 
 import json
+import random
 import time
 from pathlib import Path
 
@@ -26,8 +27,8 @@ _HUMANIZE_PROMPT_TEMPLATE = (
     "Asagidaki yapay zeka tarafindan uretilmis metni, anlamini ve icerigini degistirmeden "
     "daha dogal, akici ve bir insan tarafindan yazilmis gibi hissettirecek sekilde yeniden "
     "yaz. Cumle yapilarini cesitlendir, tekrar eden kaliplari kaldir. "
-    "Bu metin yaklasik {word_count} kelimeden olusuyor; yeniden yazdigin metin de "
-    "ONEMLI OLCUDE KISALTMADAN yaklasik ayni uzunlukta ({word_count} kelime civarinda) olmali. "
+    "Yeniden yazdigin metin yaklasik {word_count} kelime olmali (gerekirse orijinal metinden "
+    "daha uzun yaz, ONEMLI OLCUDE KISALTMA YAPMA). "
     "Sadece yeniden yazilmis metni dondur, aciklama ekleme.\n\n"
     "Metin:\n{text}"
 )
@@ -67,9 +68,10 @@ def humanize_batch(ai_raw_samples: list[RawSample], tool: str, source_dir: Path)
 def humanize_with_gemini(text: str, model: str, api_key: str) -> str:
     """Google Gemini ile bir ai_raw metnini otomatik humanize eder."""
     from google import genai
+    from .llm_generators import _sample_target_words
 
     client = genai.Client(api_key=api_key)
-    word_count = len(text.split())
+    word_count = _sample_target_words(random.Random())
     response = client.models.generate_content(
         model=model, contents=_HUMANIZE_PROMPT_TEMPLATE.format(text=text, word_count=word_count)
     )
@@ -82,8 +84,9 @@ def humanize_with_llama(text: str, model: str, endpoint: str, api_key: str | Non
     API kota/kapasite sorunlarindan bagimsizdir (lokal calisir, ucretsizdir).
     """
     import httpx
+    from .llm_generators import _sample_target_words
 
-    word_count = len(text.split())
+    word_count = _sample_target_words(random.Random())
     response = httpx.post(
         endpoint,
         headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
@@ -104,10 +107,10 @@ def humanize_with_transformers(
     load_in_4bit: bool = True,
 ) -> str:
     """HuggingFace Transformers ile ai_raw metnini humanize eder (Colab/GPU ortami icin)."""
-    from .llm_generators import _get_hf_pipeline
+    from .llm_generators import _get_hf_pipeline, _sample_target_words
 
     pipe = _get_hf_pipeline(model_id, device, load_in_4bit)
-    word_count = len(text.split())
+    word_count = _sample_target_words(random.Random())
     messages = [{"role": "user", "content": _HUMANIZE_PROMPT_TEMPLATE.format(text=text, word_count=word_count)}]
     outputs = pipe(messages, max_new_tokens=1024, do_sample=True, temperature=0.7,
                    pad_token_id=pipe.tokenizer.eos_token_id)
@@ -135,7 +138,7 @@ def _humanize_batch_transformers(
 ) -> list[RawSample]:
     """Transformers pipeline ile batch GPU inference yaparak humanize eder."""
     from dataclasses import asdict
-    from .llm_generators import _MAX_NEW_TOKENS, _get_hf_pipeline
+    from .llm_generators import _MAX_NEW_TOKENS, _get_hf_pipeline, _sample_target_words
 
     pipe = _get_hf_pipeline(model_id, device, load_in_4bit)
     if checkpoint_path:
@@ -145,11 +148,12 @@ def _humanize_batch_transformers(
     total = len(samples_to_process)
     n_batches = (total + batch_size - 1) // batch_size
     samples: list[RawSample] = []
+    rng = random.Random(42)
 
     for b in range(n_batches):
         batch = samples_to_process[b * batch_size : (b + 1) * batch_size]
         messages_batch = [
-            [{"role": "user", "content": _HUMANIZE_PROMPT_TEMPLATE.format(text=s.text, word_count=len(s.text.split()))}]
+            [{"role": "user", "content": _HUMANIZE_PROMPT_TEMPLATE.format(text=s.text, word_count=_sample_target_words(rng))}]
             for s in batch
         ]
         print(f"  [batch {b+1}/{n_batches}] {len(batch)} ornek humanize ediliyor...", flush=True)
