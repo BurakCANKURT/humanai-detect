@@ -25,8 +25,10 @@ from .schemas import RawSample
 _HUMANIZE_PROMPT_TEMPLATE = (
     "Asagidaki yapay zeka tarafindan uretilmis metni, anlamini ve icerigini degistirmeden "
     "daha dogal, akici ve bir insan tarafindan yazilmis gibi hissettirecek sekilde yeniden "
-    "yaz. Cumle yapilarini cesitlendir, tekrar eden kaliplari kaldir, ama anlami ve "
-    "uzunlugu buyuk olcude koru. Sadece yeniden yazilmis metni dondur, aciklama ekleme.\n\n"
+    "yaz. Cumle yapilarini cesitlendir, tekrar eden kaliplari kaldir. "
+    "Bu metin yaklasik {word_count} kelimeden olusuyor; yeniden yazdigin metin de "
+    "ONEMLI OLCUDE KISALTMADAN yaklasik ayni uzunlukta ({word_count} kelime civarinda) olmali. "
+    "Sadece yeniden yazilmis metni dondur, aciklama ekleme.\n\n"
     "Metin:\n{text}"
 )
 
@@ -67,7 +69,10 @@ def humanize_with_gemini(text: str, model: str, api_key: str) -> str:
     from google import genai
 
     client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(model=model, contents=_HUMANIZE_PROMPT_TEMPLATE.format(text=text))
+    word_count = len(text.split())
+    response = client.models.generate_content(
+        model=model, contents=_HUMANIZE_PROMPT_TEMPLATE.format(text=text, word_count=word_count)
+    )
     return response.text or ""
 
 
@@ -78,10 +83,14 @@ def humanize_with_llama(text: str, model: str, endpoint: str, api_key: str | Non
     """
     import httpx
 
+    word_count = len(text.split())
     response = httpx.post(
         endpoint,
         headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
-        json={"model": model, "messages": [{"role": "user", "content": _HUMANIZE_PROMPT_TEMPLATE.format(text=text)}]},
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": _HUMANIZE_PROMPT_TEMPLATE.format(text=text, word_count=word_count)}],
+        },
         timeout=300,
     )
     response.raise_for_status()
@@ -98,7 +107,8 @@ def humanize_with_transformers(
     from .llm_generators import _get_hf_pipeline
 
     pipe = _get_hf_pipeline(model_id, device, load_in_4bit)
-    messages = [{"role": "user", "content": _HUMANIZE_PROMPT_TEMPLATE.format(text=text)}]
+    word_count = len(text.split())
+    messages = [{"role": "user", "content": _HUMANIZE_PROMPT_TEMPLATE.format(text=text, word_count=word_count)}]
     outputs = pipe(messages, max_new_tokens=1024, do_sample=True, temperature=0.7,
                    pad_token_id=pipe.tokenizer.eos_token_id)
     return outputs[0]["generated_text"][-1]["content"]
@@ -139,7 +149,7 @@ def _humanize_batch_transformers(
     for b in range(n_batches):
         batch = samples_to_process[b * batch_size : (b + 1) * batch_size]
         messages_batch = [
-            [{"role": "user", "content": _HUMANIZE_PROMPT_TEMPLATE.format(text=s.text)}]
+            [{"role": "user", "content": _HUMANIZE_PROMPT_TEMPLATE.format(text=s.text, word_count=len(s.text.split()))}]
             for s in batch
         ]
         print(f"  [batch {b+1}/{n_batches}] {len(batch)} ornek humanize ediliyor...", flush=True)
