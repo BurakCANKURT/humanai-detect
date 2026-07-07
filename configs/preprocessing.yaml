@@ -3,7 +3,9 @@ spacy_model: tr_core_news_lg
 stanza_lang: tr
 
 min_tokens: 30
-max_tokens: 2000
+max_tokens: 850   # AI uretiminin (Qwen2.5-7B-Instruct) guvenilir sekilde ulasabildigi uzunluga
+                  # gore kalibre edildi (ai_raw ort=772, ai_humanized ort=668) - 2000'de insan/AI
+                  # uzunluk farki confound'un %93'unu acikliyordu (bkz. proje notlari, 2026-07-07)
 lowercase: false
 
 perplexity_model_id: dbmdz/bert-base-turkish-cased
