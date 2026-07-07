@@ -19,17 +19,20 @@ _HF_PIPELINE_CACHE: dict[str, Any] = {}
 
 _LOCAL_PROVIDERS = frozenset({"transformers", "llama"})
 
-# Insan (dergipark) korpusundaki islenmis kelime sayisi dagilimina (ort. 615,
-# std 96.4) yaklasmak icin: uzunluk tek basina siniflari %71 macro-F1 ile
-# ayirt edebiliyordu (bkz. proje notlari), bu yuzden AI uretimi de benzer bir
-# hedef kelime araligina rastgele yonlendirilir.
-_TARGET_LEN_MEAN = 605
-_TARGET_LEN_STD = 150
-_TARGET_LEN_MIN = 200
-_TARGET_LEN_MAX = 1200
+# Insan korpusunun GERCEK (3000 kayit, DergiPark harvester tamamlandiktan sonraki)
+# kelime sayisi dagilimi: ort=1750, std=487, aralik=30-2026
+# (bkz. data/raw/human/human.jsonl olcumu). Onceki 605/150/1200 degerleri, insan
+# verisi henuz 500 kayitken yapilan eski bir olcumdeki (ort. 617) kalinti idi --
+# 3000'e tamamlandiktan sonra guncellenmedigi icin AI/insan uzunluk farki ~3.3x'e
+# cikmis ve confound payi (kelime-sayisi-tek-ozellik baseline / tam model) %98'e
+# firlamisti (bkz. proje notlari, 2026-07-07). Simdi gercek dagilimla eslendi.
+_TARGET_LEN_MEAN = 1750
+_TARGET_LEN_STD = 487
+_TARGET_LEN_MIN = 100
+_TARGET_LEN_MAX = 2000
 # Ortalama ~2.2 token/kelime (Turkce, Qwen2.5 tokenizer, gozlemlenen oran) --
-# tavan, en uzun hedefi (1200 kelime) kirpmadan karsilayacak sekilde genis tutulur.
-_MAX_NEW_TOKENS = 2800
+# tavan, en uzun hedefi (2000 kelime) kirpmadan karsilayacak sekilde genis tutulur.
+_MAX_NEW_TOKENS = 4500
 
 
 def _sample_target_words(rng: random.Random) -> int:
