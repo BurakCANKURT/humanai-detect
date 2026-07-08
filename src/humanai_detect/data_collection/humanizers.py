@@ -1,12 +1,20 @@
-"""QuillBot / Wordtune / ParrotAI veya bir LLM ile ham yapay metinlerin 'humanize' edilmesi.
+"""QuillBot / Wordtune / ParrotAI, geri-ceviri (back-translation) veya bir LLM ile ham
+yapay metinlerin 'humanize' edilmesi.
 
-Iki yol var:
+Uc yol var:
 1. Manuel: QuillBot/Wordtune/ParrotAI'nin genel kullanima acik API'si olmadigi icin,
    ham-AI (ai_raw) metinler aracin web arayuzunde elle yeniden yazilir ve
    data/external/humanized/<tool>/<sample_id>.txt olarak kaydedilir; import_humanized_sample/
    humanize_batch bu klasoru okuyup orijinal ai_raw ornegiyle id'den eslestirir.
 2. Otomatik (LLM): Gemini gibi bir LLM, ai_raw metnini "daha insansi" gorunecek sekilde
    yeniden yazar (humanize_with_gemini/humanize_batch_llm) - manuel dosya kopyalama gerekmez.
+3. Otomatik (geri-ceviri): Turkce->Ingilizce->Turkce ceviri (Helsinki-NLP/OPUS-MT,
+   humanize_with_backtranslation) ile paraphrase uretir. QuillBot/Wordtune/ParrotAI'nin
+   API'sizlik/dil-destegi kisitlari nedeniyle pratik bir alternatif olarak eklendi;
+   metodolojik olarak DIPPER'in (Krishna ve ark., NeurIPS 2023, "Paraphrasing evades
+   detectors of AI-generated text") paraphrase-tabanli insansilastirma yaklasimindan
+   esinlenmistir. Ayri bir mimari (seq2seq ceviri modeli) kullandigi icin ai_raw uretiminde
+   kullanilan LLM ile ayni model olma sorunu yasanmaz.
 
 Hangi araclarin/saglayicilarin aktif oldugu configs/data_sources.yaml -> humanizers.*
 altinda tanimlidir.
@@ -123,7 +131,103 @@ _LLM_HUMANIZERS = {
     "transformers": humanize_with_transformers,
 }
 
-_LOCAL_PROVIDERS = frozenset({"transformers", "llama"})
+_LOCAL_PROVIDERS = frozenset({"transformers", "llama", "backtranslate"})
+
+_MT_MODEL_CACHE: dict[str, tuple] = {}
+
+
+def _get_mt_model(model_id: str, device: str):
+    """Marian/seq2seq ceviri modelini (+tokenizer) yukler, cache'ler."""
+    cache_key = f"{model_id}|{device}"
+    if cache_key in _MT_MODEL_CACHE:
+        return _MT_MODEL_CACHE[cache_key]
+
+    import torch
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+    resolved_device = ("cuda" if torch.cuda.is_available() else "cpu") if device == "auto" else device
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_id).to(resolved_device)
+    model.eval()
+    _MT_MODEL_CACHE[cache_key] = (model, tokenizer, resolved_device)
+    return _MT_MODEL_CACHE[cache_key]
+
+
+def _translate_batch(texts: list[str], model_id: str, device: str, max_length: int = 512) -> list[str]:
+    """Bir metin listesini tek bir yonde (orn. tr->en) topluca cevirir."""
+    import torch
+
+    model, tokenizer, resolved_device = _get_mt_model(model_id, device)
+    inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=max_length)
+    inputs = {k: v.to(resolved_device) for k, v in inputs.items()}
+    with torch.no_grad():
+        outputs = model.generate(**inputs, max_length=max_length, num_beams=4)
+    return tokenizer.batch_decode(outputs, skip_special_tokens=True)
+
+
+def _split_for_translation(text: str, max_words: int = 80) -> list[str]:
+    """Uzun metni ceviri modelinin max_length sinirina (512 subword token) guvenle
+    sigacak kucuk, cumle-sinirli parcalara boler."""
+    from .file_ingest import chunk_text
+
+    pieces = chunk_text(text, min_words=1, max_words=max_words)
+    return pieces if pieces else [text]
+
+
+def humanize_with_backtranslation(
+    text: str,
+    tr_en_model: str = "Helsinki-NLP/opus-mt-tc-big-tr-en",
+    en_tr_model: str = "Helsinki-NLP/opus-mt-tc-big-en-tr",
+    device: str = "auto",
+) -> str:
+    """Turkce->Ingilizce->Turkce geri-ceviri ile paraphrase uretir (bkz. modul docstring'i)."""
+    tr_chunks = _split_for_translation(text)
+    en_chunks = _translate_batch(tr_chunks, tr_en_model, device)
+    tr_back_chunks = _translate_batch(en_chunks, en_tr_model, device)
+    return " ".join(tr_back_chunks)
+
+
+def _humanize_batch_backtranslation(
+    ai_raw_samples: list[RawSample],
+    start_index: int,
+    checkpoint_path: Path | None,
+    tr_en_model: str = "Helsinki-NLP/opus-mt-tc-big-tr-en",
+    en_tr_model: str = "Helsinki-NLP/opus-mt-tc-big-en-tr",
+    device: str = "auto",
+) -> list[RawSample]:
+    from dataclasses import asdict
+
+    if checkpoint_path:
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    samples_to_process = ai_raw_samples[start_index:]
+    total = len(samples_to_process)
+    samples: list[RawSample] = []
+
+    for i, ai_raw_sample in enumerate(samples_to_process, start=1):
+        print(f"  [{i}/{total}] backtranslate: {ai_raw_sample.id} isleniyor...", flush=True)
+        text = humanize_with_backtranslation(ai_raw_sample.text, tr_en_model, en_tr_model, device).strip()
+        if not text:
+            print(f"  UYARI: bos yanit (ornek={ai_raw_sample.id}), atlaniyor.", flush=True)
+            continue
+        sample = RawSample(
+            id=f"ai_humanized_backtranslate_{ai_raw_sample.id}",
+            text=text,
+            label="ai_humanized",
+            source="backtranslate",
+            metadata={
+                "original_id": ai_raw_sample.id,
+                "original_source": ai_raw_sample.source,
+                "tr_en_model": tr_en_model,
+                "en_tr_model": en_tr_model,
+            },
+        )
+        samples.append(sample)
+        if checkpoint_path is not None:
+            with checkpoint_path.open("a", encoding="utf-8") as fp:
+                fp.write(json.dumps(asdict(sample), ensure_ascii=False) + "\n")
+
+    return samples
 
 
 def _humanize_batch_transformers(
@@ -214,6 +318,11 @@ def humanize_batch_llm(
         return _humanize_batch_transformers(
             ai_raw_samples, provider, start_index, checkpoint_path,
             batch_size=batch_size, **provider_kwargs,
+        )
+
+    if provider == "backtranslate":
+        return _humanize_batch_backtranslation(
+            ai_raw_samples, start_index, checkpoint_path, **provider_kwargs,
         )
 
     humanize_fn = _LLM_HUMANIZERS[provider]

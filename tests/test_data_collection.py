@@ -112,6 +112,36 @@ def test_humanize_batch_llm_calls_provider_for_each_sample(monkeypatch) -> None:
     assert samples[0].metadata["original_id"] == "ai_raw_gemini_0000"
 
 
+def test_humanize_batch_backtranslation_roundtrips_via_translate_batch(monkeypatch) -> None:
+    calls = []
+
+    def fake_translate_batch(texts, model_id, device, max_length=512):
+        calls.append((list(texts), model_id))
+        return [f"[{model_id}] {t}" for t in texts]
+
+    monkeypatch.setattr(humanizers_module, "_translate_batch", fake_translate_batch)
+    ai_raw_samples = [
+        RawSample(id="ai_raw_transformers_0000", text="kisa bir metin.", label="ai_raw", source="transformers"),
+    ]
+
+    samples = humanize_batch_llm(
+        ai_raw_samples,
+        provider="backtranslate",
+        tr_en_model="tr-en-model",
+        en_tr_model="en-tr-model",
+    )
+
+    assert len(calls) == 2
+    assert calls[0][1] == "tr-en-model"
+    assert calls[1][1] == "en-tr-model"
+    assert len(samples) == 1
+    assert samples[0].id == "ai_humanized_backtranslate_ai_raw_transformers_0000"
+    assert samples[0].label == "ai_humanized"
+    assert samples[0].source == "backtranslate"
+    assert samples[0].metadata["original_id"] == "ai_raw_transformers_0000"
+    assert "[en-tr-model]" in samples[0].text
+
+
 def test_download_turkish_wikipedia_writes_files_and_skips_short_articles(tmp_path: Path) -> None:
     fake_articles = [
         {"title": "Kisa Madde", "text": "cok kisa"},

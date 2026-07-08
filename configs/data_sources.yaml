@@ -64,11 +64,20 @@ humanizers:
       endpoint_env: LLAMA_ENDPOINT
       api_key_env: LLAMA_API_KEY
     transformers:
-      enabled: true   # Colab T4/A100 GPU ile calisir
+      enabled: false  # backtranslate lehine kapatildi (ai_raw ile AYNI model humanize de
+                       # yapinca ai_raw/ai_humanized ayirt edilemez cikiyordu, bkz. proje notlari)
       model: Qwen/Qwen2.5-7B-Instruct
       device: auto
-      load_in_4bit: false  # A100'de fp16 4-bit'ten daha hizli; T4'te true'ya donulmeli
-      batch_size: 16       # A100 icin; T4 icin 4-8 onerilir
+      load_in_4bit: false
+      batch_size: 16
+    backtranslate:
+      enabled: true   # ANA YONTEM: Turkce->Ingilizce->Turkce geri-ceviri (Helsinki-NLP/OPUS-MT,
+                       # CC-BY 4.0). QuillBot/Wordtune/ParrotAI'nin API'sizlik/dil-destegi
+                       # kisitlari nedeniyle pratik alternatif; ai_raw'dan tamamen farkli bir
+                       # mimari (seq2seq ceviri, LLM degil) kullanir.
+      tr_en_model: Helsinki-NLP/opus-mt-tc-big-tr-en
+      en_tr_model: Helsinki-NLP/opus-mt-tc-big-en-tr
+      device: auto
 
 # manual_corpus icin scraping yerine acik lisansli (CC BY-SA), hazir bir Turkce
 # korpus (Vikipedi dump'i, Hugging Face uzerinden) indirilir. CAPTCHA/ToS riski yok.

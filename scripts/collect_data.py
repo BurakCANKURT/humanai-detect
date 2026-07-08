@@ -139,6 +139,12 @@ def collect_ai_humanized(paths_cfg: dict, data_sources_cfg: dict) -> list[RawSam
                         "load_in_4bit": provider_cfg.get("load_in_4bit", True),
                         "batch_size": provider_cfg.get("batch_size", 8),
                     }
+                elif provider == "backtranslate":
+                    kwargs = {
+                        "tr_en_model": provider_cfg["tr_en_model"],
+                        "en_tr_model": provider_cfg["en_tr_model"],
+                        "device": provider_cfg.get("device", "auto"),
+                    }
                 else:
                     kwargs = {
                         "model": provider_cfg["model"],
