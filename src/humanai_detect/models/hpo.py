@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 from sklearn.metrics import f1_score
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 
 from .factory import build_model
 
@@ -51,23 +51,30 @@ def run_optuna_study(
     metric: str = "macro_f1",
     cv_folds: int = 3,
     timeout: int | None = None,
+    groups: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Belirtilen model icin Optuna study calistirir, en iyi parametreleri dondurur.
 
     metric: 'macro_f1' | 'accuracy' | 'weighted_f1'
     timeout: saniye cinsinden maksimum sure (None = sinirsiz)
+    groups: verilirse StratifiedGroupKFold kullanilir (kaynak-duzeyinde leakage onleme)
 
     Donus: {'best_params': dict, 'best_value': float, 'n_trials': int}
     """
     import optuna
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    if groups is not None:
+        skf = StratifiedGroupKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        splits = list(skf.split(X, y, groups=groups))
+    else:
+        skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        splits = list(skf.split(X, y))
 
     def objective(trial: Any) -> float:
         params = _suggest_params(trial, model_name)
         scores: list[float] = []
-        for train_idx, val_idx in skf.split(X, y):
+        for train_idx, val_idx in splits:
             model = build_model(model_name, params)
             model.fit(X[train_idx], y[train_idx])
             y_pred = model.predict(X[val_idx])

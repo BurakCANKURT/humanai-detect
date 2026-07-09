@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 
 from .factory import build_model
 
@@ -59,16 +59,24 @@ def run_hierarchical_cv(
     stage_b_model: str,
     stage_b_params: dict[str, Any],
     cv_folds: int = 5,
+    groups: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Iki asamali cascade icin stratified k-fold CV.
+
+    groups verilirse StratifiedGroupKFold kullanilir (kaynak-duzeyinde leakage onleme).
 
     Donus, run_cv_training ile ayni sekilde: fold_metrics + mean_*/std_* (3-sinifli
     accuracy/macro_f1/weighted_f1 uzerinden, tek-asamali modellerle dogrudan kiyaslanabilir).
     """
-    skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    if groups is not None:
+        skf = StratifiedGroupKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        split_iter = skf.split(X, y, groups=groups)
+    else:
+        skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        split_iter = skf.split(X, y)
     fold_results: list[dict[str, float]] = []
 
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
+    for fold, (train_idx, val_idx) in enumerate(split_iter, 1):
         y_pred = _fit_predict_fold(
             X[train_idx], y[train_idx], X[val_idx],
             stage_a_model, stage_a_params, stage_b_model, stage_b_params,

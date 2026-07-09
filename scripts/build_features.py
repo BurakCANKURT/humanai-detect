@@ -34,6 +34,86 @@ def _load_samples(interim_dir, label: str) -> list[ProcessedSample]:
     return [ProcessedSample(**r) for r in read_jsonl(path)]
 
 
+class _UnionFind:
+    """Ayni kaynaktan (veya birebir ayni metinden) gelen gruplari birlestirmek icin basit DSU."""
+
+    def __init__(self) -> None:
+        self._parent: dict[str, str] = {}
+
+    def find(self, x: str) -> str:
+        self._parent.setdefault(x, x)
+        while self._parent[x] != x:
+            self._parent[x] = self._parent[self._parent[x]]
+            x = self._parent[x]
+        return x
+
+    def union(self, a: str, b: str) -> None:
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self._parent[ra] = rb
+
+
+def _build_groups(all_samples: list[ProcessedSample]) -> pd.DataFrame:
+    """Her ornek icin CV-grouping amacli bir kaynak grubu (group_id) turetir.
+
+    Amac: StratifiedGroupKFold ile ayni kaynak dokumandan/prompt'tan gelen orneklerin
+    train/validation arasinda bolunmesini (leakage) onlemek.
+      - human       : DergiPark ise oai_id, degilse kaynak dosya adi (filename).
+      - ai_raw      : uretimde kullanilan prompt metni (sinirli sayida sablon var).
+      - ai_humanized: eslesen ai_raw orneginin (metadata.original_id) grubunu miras alir.
+
+    Ayrica: metadata farkli olsa bile (orn. DergiPark'ta ayni makalenin iki farkli oai_id
+    altinda mukerrer indekslenmesi) BIREBIR AYNI temiz metne sahip orneklerin gruplari
+    Union-Find ile birlestirilir — aksi halde bu kopyalar train/validation arasina
+    bolunup dogrudan (seyreltilmemis) veri sizintisina yol acabilir.
+    """
+    ai_raw_topic_by_id: dict[str, str] = {}
+    prompt_to_topic: dict[str, str] = {}
+    for s in all_samples:
+        if s.label != "ai_raw":
+            continue
+        prompt = (s.metadata or {}).get("prompt", "")
+        topic = prompt_to_topic.setdefault(prompt, f"ai_topic_{len(prompt_to_topic):02d}")
+        ai_raw_topic_by_id[s.id] = topic
+
+    prelim: dict[str, str] = {}
+    for s in all_samples:
+        md = s.metadata or {}
+        if s.label == "human":
+            if "oai_id" in md:
+                group_id = f"human_doc_oai_{md['oai_id']}"
+            elif "filename" in md:
+                group_id = f"human_doc_file_{md['filename']}"
+            else:
+                group_id = f"human_doc_{s.id}"  # tekil (kaynak bilgisi yok)
+        elif s.label == "ai_raw":
+            group_id = ai_raw_topic_by_id.get(s.id, f"ai_topic_unknown_{s.id}")
+        elif s.label == "ai_humanized":
+            orig_id = md.get("original_id")
+            group_id = ai_raw_topic_by_id.get(orig_id, f"ai_topic_unknown_{s.id}")
+        else:
+            group_id = s.id
+        prelim[s.id] = group_id
+
+    # Birebir ayni temiz metne sahip orneklerin (farkli kaynak/oai_id'ye ragmen)
+    # gruplarini birlestir.
+    uf = _UnionFind()
+    text_first_group: dict[str, str] = {}
+    for s in all_samples:
+        text = s.cleaned_text.strip()
+        gid = prelim[s.id]
+        if text in text_first_group:
+            uf.union(gid, text_first_group[text])
+        else:
+            text_first_group[text] = gid
+
+    rows = [
+        {"sample_id": s.id, "label": s.label, "group_id": uf.find(prelim[s.id])}
+        for s in all_samples
+    ]
+    return pd.DataFrame(rows)
+
+
 def _build_reference(human_samples: list[ProcessedSample]) -> dict:
     """Insan egitim kumesinden referans istatistiklerini hesaplar."""
     if not human_samples:
@@ -161,6 +241,13 @@ def main() -> None:
     out_path = processed_dir / "stylometric.parquet"
     write_parquet(df, out_path)
     print(f"[stilometri] {len(df)} ornek, {len(df.columns)-2} ozellik -> {out_path}")
+
+    # --- Grouping (CV leakage onleme) ---
+    groups_df = _build_groups(all_samples)
+    groups_path = processed_dir / "groups.parquet"
+    write_parquet(groups_df, groups_path)
+    n_groups = groups_df["group_id"].nunique()
+    print(f"[groups] {len(groups_df)} ornek, {n_groups} benzersiz kaynak grubu -> {groups_path}")
 
     # --- Asama 4: Embedding ---
     if not args.skip_embeddings and all_samples:

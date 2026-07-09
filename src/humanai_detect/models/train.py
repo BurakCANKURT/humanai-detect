@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 from sklearn.metrics import accuracy_score, f1_score
 
 from .factory import build_model
@@ -27,18 +27,28 @@ def run_cv_training(
     model_name: str,
     model_params: dict[str, Any],
     cv_folds: int = 5,
+    groups: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Stratified k-fold CV ile egitim yapar; fold metriklerini ve ozet istatistikleri dondurur.
+
+    groups verilirse (orn. kaynak dokuman/prompt kimligi) StratifiedGroupKFold kullanilir —
+    ayni gruptan (dokuman/prompt) gelen ornekler ayni fold'da kalir, boylece train/validation
+    arasinda kaynak-duzeyinde sizinti (leakage) onlenir.
 
     Donus sozlugu:
         fold_metrics : her fold icin accuracy/macro_f1/weighted_f1
         mean_*       : metrik ortalamasi
         std_*        : metrik standart sapmasi
     """
-    skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    if groups is not None:
+        skf = StratifiedGroupKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        split_iter = skf.split(X, y, groups=groups)
+    else:
+        skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        split_iter = skf.split(X, y)
     fold_results: list[dict[str, float]] = []
 
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
+    for fold, (train_idx, val_idx) in enumerate(split_iter, 1):
         model = build_model(model_name, model_params)
         model.fit(X[train_idx], y[train_idx])
         y_pred = model.predict(X[val_idx])
