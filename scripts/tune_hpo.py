@@ -53,15 +53,15 @@ def main() -> None:
     cv_folds = load_yaml("hpo_eval")["evaluation"]["cv_folds"]
 
     print(f"[hpo] {args.model} icin {n_trials} trial Optuna calisiyor (metrik={metric})...")
-    study = run_optuna_study(
+    result = run_optuna_study(
         args.model, X, y,
         n_trials=n_trials,
         metric=metric,
         cv_folds=cv_folds,
     )
 
-    best = study.best_params
-    best_value = study.best_value
+    best = result["best_params"]
+    best_value = result["best_value"]
     print(f"[hpo] En iyi {metric}: {best_value:.4f}")
     print(f"[hpo] En iyi parametreler: {best}")
 
@@ -74,10 +74,7 @@ def main() -> None:
     print(f"[hpo] Best params -> {params_path}")
 
     # Trial ozeti
-    trials_data = [
-        {"number": t.number, "value": t.value, "params": t.params, "state": str(t.state)}
-        for t in study.trials
-    ]
+    trials_data = result["trials"]
     study_path = report_dir / f"{args.model}_study.json"
     study_path.write_text(json.dumps(trials_data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[hpo] Study JSON ({len(trials_data)} trial) -> {study_path}")

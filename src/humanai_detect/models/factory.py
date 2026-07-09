@@ -76,4 +76,11 @@ def build_model(name: str, params: dict[str, Any]):
             class_weight=cw, random_state=rs,
         )
 
-    raise ValueError(f"Bilinmeyen model adi: {name!r}  (xgboost | catboost | mlp | logreg)")
+    if name == "stacking":
+        from .stacking import build_stacking_from_config
+
+        # params burada tekil model params degil, configs/models.yaml'in tamami
+        # (common + stacking + xgboost/catboost/mlp/logreg alt sozlukleri) olmali.
+        return build_stacking_from_config(params)
+
+    raise ValueError(f"Bilinmeyen model adi: {name!r}  (xgboost | catboost | mlp | logreg | stacking)")

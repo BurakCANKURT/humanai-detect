@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import pickle
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +17,6 @@ import pandas as pd
 
 from humanai_detect.config import PROJECT_ROOT, load_yaml
 from humanai_detect.models.train import run_cv_training, train_final_model
-from humanai_detect.models.stacking import build_stacking_from_config
 
 LABEL_NAMES = ["human", "ai_raw", "ai_humanized"]
 LABEL_TO_INT = {lbl: i for i, lbl in enumerate(LABEL_NAMES)}
@@ -65,7 +63,7 @@ def main() -> None:
 
     model_name = args.model
     if model_name == "stacking":
-        model_params = {}
+        model_params = models_cfg
     else:
         common = models_cfg.get("common", {})
         model_params = {**common, **models_cfg.get(model_name, {})}
@@ -102,16 +100,8 @@ def main() -> None:
         models_dir = PROJECT_ROOT / paths_cfg["models_dir"]
         models_dir.mkdir(parents=True, exist_ok=True)
         save_path = models_dir / f"{model_name}.pkl"
-
-        if model_name == "stacking":
-            model = build_stacking_from_config(models_cfg)
-            model.fit(X, y)
-            with open(save_path, "wb") as f:
-                pickle.dump(model, f)
-            print(f"[train] Stacking modeli kaydedildi -> {save_path}")
-        else:
-            train_final_model(X, y, model_name, model_params, save_path=save_path)
-            print(f"[train] Model kaydedildi -> {save_path}")
+        train_final_model(X, y, model_name, model_params, save_path=save_path)
+        print(f"[train] Model kaydedildi -> {save_path}")
 
 
 if __name__ == "__main__":

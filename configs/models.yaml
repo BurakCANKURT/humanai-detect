@@ -3,11 +3,11 @@ common:
   class_weight: balanced
 
 xgboost:
-  max_depth: 6
-  min_child_weight: 1
-  colsample_bytree: 0.8
-  eta: 0.1
-  n_estimators: 300
+  max_depth: 3
+  min_child_weight: 2
+  colsample_bytree: 0.6061695553391381
+  eta: 0.16967533607196555
+  n_estimators: 585
 
 catboost:
   depth: 6

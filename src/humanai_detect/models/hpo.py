@@ -87,8 +87,13 @@ def run_optuna_study(
     )
     study.optimize(objective, n_trials=n_trials, timeout=timeout, show_progress_bar=True)
 
+    trials_data = [
+        {"number": t.number, "value": t.value, "params": t.params, "state": str(t.state)}
+        for t in study.trials
+    ]
     return {
         "best_params": study.best_params,
         "best_value": study.best_value,
         "n_trials": len(study.trials),
+        "trials": trials_data,
     }
