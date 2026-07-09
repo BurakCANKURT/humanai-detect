@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,7 @@ import pandas as pd
 
 from humanai_detect.config import PROJECT_ROOT, load_yaml
 from humanai_detect.models.train import run_cv_training, train_final_model
+from humanai_detect.models.hierarchical import run_hierarchical_cv, train_final_hierarchical
 
 LABEL_NAMES = ["human", "ai_raw", "ai_humanized"]
 LABEL_TO_INT = {lbl: i for i, lbl in enumerate(LABEL_NAMES)}
@@ -26,7 +28,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        choices=["xgboost", "catboost", "mlp", "logreg", "stacking"],
+        choices=["xgboost", "catboost", "mlp", "logreg", "stacking", "hierarchical"],
         default="xgboost",
         help="Hangi model egitilecek",
     )
@@ -62,15 +64,27 @@ def main() -> None:
     print(f"[train] {len(X)} ornek, {len(feat_cols)} ozellik, model={args.model}")
 
     model_name = args.model
+    common = models_cfg.get("common", {})
     if model_name == "stacking":
         model_params = models_cfg
+    elif model_name == "hierarchical":
+        hier_cfg = models_cfg.get("hierarchical", {})
+        stage_a_name = hier_cfg.get("stage_a_model", "xgboost")
+        stage_b_name = hier_cfg.get("stage_b_model", "xgboost")
+        stage_a_params = {**common, **models_cfg.get(stage_a_name, {})}
+        stage_b_params = {**common, **models_cfg.get(stage_b_name, {})}
     else:
-        common = models_cfg.get("common", {})
         model_params = {**common, **models_cfg.get(model_name, {})}
 
     # CV
     print(f"[train] {args.cv_folds}-fold CV basliyor...")
-    cv_results = run_cv_training(X, y, model_name, model_params, cv_folds=args.cv_folds)
+    if model_name == "hierarchical":
+        cv_results = run_hierarchical_cv(
+            X, y, stage_a_name, stage_a_params, stage_b_name, stage_b_params,
+            cv_folds=args.cv_folds,
+        )
+    else:
+        cv_results = run_cv_training(X, y, model_name, model_params, cv_folds=args.cv_folds)
 
     mean_f1 = cv_results["mean_macro_f1"]
     std_f1 = cv_results["std_macro_f1"]
@@ -100,8 +114,16 @@ def main() -> None:
         models_dir = PROJECT_ROOT / paths_cfg["models_dir"]
         models_dir.mkdir(parents=True, exist_ok=True)
         save_path = models_dir / f"{model_name}.pkl"
-        train_final_model(X, y, model_name, model_params, save_path=save_path)
-        print(f"[train] Model kaydedildi -> {save_path}")
+        if model_name == "hierarchical":
+            model = train_final_hierarchical(
+                X, y, stage_a_name, stage_a_params, stage_b_name, stage_b_params,
+            )
+            with open(save_path, "wb") as f:
+                pickle.dump(model, f)
+            print(f"[train] Model kaydedildi -> {save_path}")
+        else:
+            train_final_model(X, y, model_name, model_params, save_path=save_path)
+            print(f"[train] Model kaydedildi -> {save_path}")
 
 
 if __name__ == "__main__":

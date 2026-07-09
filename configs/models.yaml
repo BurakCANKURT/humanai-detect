@@ -32,3 +32,7 @@ stacking:
   base_models: [xgboost, catboost, mlp, logreg]
   meta_learner: logreg
   passthrough: false
+
+hierarchical:
+  stage_a_model: xgboost  # human vs AI
+  stage_b_model: xgboost  # ai_raw vs ai_humanized
