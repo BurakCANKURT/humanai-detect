@@ -37,6 +37,8 @@ dependencies = [
     "tqdm",
     "pdfplumber",
     "python-docx",
+    "pymupdf",
+    "py3langid",
 ]
 
 [project.optional-dependencies]

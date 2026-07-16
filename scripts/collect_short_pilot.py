@@ -36,10 +36,14 @@ from dataclasses import asdict
 
 from humanai_detect.config import PROJECT_ROOT, get_api_key, load_yaml
 from humanai_detect.data_collection import humanizers, llm_generators
-from humanai_detect.data_collection.dergipark_harvest import _bibliography_ratio, _is_turkish
 from humanai_detect.data_collection.file_ingest import chunk_text
 from humanai_detect.data_collection.schemas import RawSample
 from humanai_detect.utils.io import read_jsonl, write_jsonl
+
+# dergipark_harvest'in _bibliography_ratio/_is_turkish fonksiyonlari SADECE
+# collect_human_short() icinde, fonksiyon ici (lazy) import edilir -- bu modul
+# fitz (PyMuPDF) ve py3langid'e bagimli; ai_raw/ai_humanized (Colab, GPU) yollari
+# bunlara hic ihtiyac duymuyor, gereksiz bagimlilik/kurulum sartina yol acmasin.
 
 PROVIDER_TAG = "transformers_short"
 
@@ -65,6 +69,13 @@ _CITATION_PAGES_RE = re.compile(r"\(\d+\)[,:]?\s*\d+[-–]\d+")
 
 
 def _looks_like_header(text: str) -> bool:
+    # Lazy import: bu iki fonksiyon dergipark_harvest.py'de tanimli, fitz (PyMuPDF)
+    # ve py3langid'e bagimli bir modulden geliyor -- sadece human_short yolunda
+    # gerekli, ai_raw/ai_humanized (Colab, GPU) calistirmalarinda hic ihtiyac
+    # duyulmuyor, modul-seviyesi import olsaydi onlar icin de gereksiz kurulum
+    # sartina yol acardi.
+    from humanai_detect.data_collection.dergipark_harvest import _bibliography_ratio, _is_turkish
+
     letters = [c for c in text if c.isalpha()]
     if not letters:
         return True
