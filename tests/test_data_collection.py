@@ -211,3 +211,36 @@ def test_sample_target_words_clips_to_custom_bounds() -> None:
     # yaramasi icin ortalamayi sinirin disina koyuyoruz.
     val = _sample_target_words(rng, mean=1000, std=0.001, min_words=5, max_words=30)
     assert val == 30
+
+
+# ---------------------------------------------------------------------------
+# generate_batch: "transformers_short" gibi alt-etiketli saglayicilarin da
+# transformers batch-inference yoluna dusmesi gerekir (bkz. scripts/collect_short_pilot.py
+# PROVIDER_TAG -- Colab'da KeyError: 'transformers_short' ile cokmustu, 2026-07-16 duzeltildi)
+# ---------------------------------------------------------------------------
+
+from humanai_detect.data_collection.llm_generators import generate_batch
+
+
+def test_generate_batch_routes_transformers_suffixed_provider(monkeypatch) -> None:
+    from humanai_detect.data_collection import llm_generators as llm_generators_module
+
+    class FakePipe:
+        tokenizer = type("FakeTokenizer", (), {"eos_token_id": 0})()
+
+        def __call__(self, messages_batch, **kwargs):
+            return [
+                [{"generated_text": messages + [{"role": "assistant", "content": "kisa uretilen metin."}]}]
+                for messages in messages_batch
+            ]
+
+    monkeypatch.setattr(llm_generators_module, "_get_hf_pipeline", lambda *a, **k: FakePipe())
+
+    samples = generate_batch(
+        ["bir prompt"], "transformers_short", target_count=2,
+        model_id="fake-model", device="cpu", load_in_4bit=False, batch_size=2,
+    )
+
+    assert len(samples) == 2
+    assert all(s.id.startswith("ai_raw_transformers_short_") for s in samples)
+    assert all(s.text == "kisa uretilen metin." for s in samples)

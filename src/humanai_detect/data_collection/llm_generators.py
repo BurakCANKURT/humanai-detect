@@ -261,8 +261,10 @@ def generate_batch(
     if not prompts:
         raise ValueError("prompts listesi bos olamaz")
 
-    # Transformers için doğrudan batch inference kullan (rate limit yok, GPU paralel)
-    if provider == "transformers":
+    # Transformers için doğrudan batch inference kullan (rate limit yok, GPU paralel).
+    # "transformers_short" gibi bir alt-etiket de (kisa-pilot verisi icin, sample ID'lerini
+    # ana veri setinden ayirt etmek amaciyla) ayni batch inference yolunu kullanir.
+    if provider == "transformers" or provider.startswith("transformers_"):
         batch_size = int(provider_kwargs.pop("batch_size", 8))
         return _generate_batch_transformers(
             prompts, provider, target_count, start_index, checkpoint_path,
