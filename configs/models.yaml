@@ -1,6 +1,9 @@
 common:
   random_state: 42
   class_weight: balanced
+  calibrate: true
+  calibrate_method: isotonic
+  calibrate_cv: 5
 
 xgboost:
   max_depth: 3

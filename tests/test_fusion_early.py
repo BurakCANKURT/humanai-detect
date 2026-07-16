@@ -145,3 +145,67 @@ class TestFuse:
         assert "sample_id" in df.columns
         assert "label" in df.columns
         assert df.shape == (4, 2 + 2 + 4)  # meta + sty + emb
+
+
+# ---------------------------------------------------------------------------
+# length_residualize.py
+# ---------------------------------------------------------------------------
+
+class TestLengthResidualizer:
+    def _make_df(self, n=200, seed=0):
+        rng = np.random.default_rng(seed)
+        token_counts = rng.integers(20, 900, size=n).astype(float)
+        # kl_div_word_freq'i uzunlukla dogrudan (gurultulu) iliskili uret: kisa metinde yuksek
+        noise = rng.normal(0, 0.05, size=n)
+        kl = 2.0 / np.log1p(token_counts) + noise
+        df = pd.DataFrame({
+            "sample_id": [f"s{i}" for i in range(n)],
+            "label": ["human"] * n,
+            "kl_div_word_freq": kl,
+        })
+        return df, token_counts
+
+    def test_residual_removes_length_correlation(self):
+        from humanai_detect.fusion.length_residualize import (
+            fit_length_residualizer, apply_length_residualizer_df,
+        )
+        df, token_counts = self._make_df()
+        params = fit_length_residualizer(df, token_counts, feature_names=["kl_div_word_freq"])
+        residualized = apply_length_residualizer_df(df, token_counts, params)
+
+        corr_before = np.corrcoef(df["kl_div_word_freq"], np.log1p(token_counts))[0, 1]
+        corr_after = np.corrcoef(residualized["kl_div_word_freq"], np.log1p(token_counts))[0, 1]
+        assert abs(corr_before) > 0.5
+        assert abs(corr_after) < 0.1
+
+    def test_train_mask_excludes_holdout_from_fit(self):
+        from humanai_detect.fusion.length_residualize import fit_length_residualizer
+        df, token_counts = self._make_df()
+        mask = np.array([True] * 150 + [False] * 50)
+        params_masked = fit_length_residualizer(df, token_counts, feature_names=["kl_div_word_freq"], train_mask=mask)
+        params_full = fit_length_residualizer(df, token_counts, feature_names=["kl_div_word_freq"])
+        # farkli alt kumelerle fit edildigi icin katsayilar birebir ayni olmamali
+        assert params_masked["kl_div_word_freq"] != params_full["kl_div_word_freq"]
+
+    def test_missing_feature_ignored(self):
+        from humanai_detect.fusion.length_residualize import fit_length_residualizer
+        df, token_counts = self._make_df()
+        params = fit_length_residualizer(df, token_counts, feature_names=["nonexistent_feature"])
+        assert params == {}
+
+    def test_apply_dict_single_sample(self):
+        from humanai_detect.fusion.length_residualize import apply_length_residualizer_dict
+        params = {"burstiness": {"slope": 0.5, "intercept": -1.0}}
+        feats = {"burstiness": 0.3, "ttr": 0.7}
+        out = apply_length_residualizer_dict(feats, token_count=99, params=params)
+        log_tok = np.log1p(99)
+        expected = 0.3 - (0.5 * log_tok - 1.0)
+        assert math.isclose(out["burstiness"], expected, rel_tol=1e-9)
+        assert out["ttr"] == 0.7  # ilgisiz feature degismemeli
+
+    def test_apply_dict_skips_nan(self):
+        from humanai_detect.fusion.length_residualize import apply_length_residualizer_dict
+        params = {"kl_div_word_freq": {"slope": 1.0, "intercept": 0.0}}
+        feats = {"kl_div_word_freq": float("nan")}
+        out = apply_length_residualizer_dict(feats, token_count=50, params=params)
+        assert math.isnan(out["kl_div_word_freq"])

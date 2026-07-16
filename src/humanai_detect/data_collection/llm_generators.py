@@ -35,9 +35,15 @@ _TARGET_LEN_MAX = 2000
 _MAX_NEW_TOKENS = 4500
 
 
-def _sample_target_words(rng: random.Random) -> int:
-    val = rng.gauss(_TARGET_LEN_MEAN, _TARGET_LEN_STD)
-    return int(max(_TARGET_LEN_MIN, min(_TARGET_LEN_MAX, val)))
+def _sample_target_words(
+    rng: random.Random,
+    mean: float = _TARGET_LEN_MEAN,
+    std: float = _TARGET_LEN_STD,
+    min_words: int = _TARGET_LEN_MIN,
+    max_words: int = _TARGET_LEN_MAX,
+) -> int:
+    val = rng.gauss(mean, std)
+    return int(max(min_words, min(max_words, val)))
 
 
 def _with_length_instruction(prompt: str, target_words: int) -> str:
@@ -160,8 +166,19 @@ def _generate_batch_transformers(
     model_id: str = "Qwen/Qwen2.5-7B-Instruct",
     device: str = "auto",
     load_in_4bit: bool = True,
+    target_len_mean: float = _TARGET_LEN_MEAN,
+    target_len_std: float = _TARGET_LEN_STD,
+    target_len_min: int = _TARGET_LEN_MIN,
+    target_len_max: int = _TARGET_LEN_MAX,
+    max_new_tokens: int = _MAX_NEW_TOKENS,
 ) -> list[RawSample]:
-    """Transformers pipeline ile batch GPU inference yapar; A100 gibi büyük GPU'larda çok daha hızlı."""
+    """Transformers pipeline ile batch GPU inference yapar; A100 gibi büyük GPU'larda çok daha hızlı.
+
+    target_len_*/max_new_tokens varsayilanlari ana 3000/sinif veri setinin (~1750 kelime
+    ortalama, insan korpusuna hizali) parametreleridir. Kisa-metin pilot verisi (bkz.
+    scripts/collect_short_pilot.py) gibi farkli bir hedef uzunluk gerektiren cagrilar
+    bu degerleri override edebilir; varsayilan davranis (ana veri seti) degismez.
+    """
     import json
     from dataclasses import asdict as _asdict
 
@@ -171,7 +188,11 @@ def _generate_batch_transformers(
 
     rng = random.Random(42)
     items = [
-        (start_index + j, prompts[(start_index + j) % len(prompts)], _sample_target_words(rng))
+        (
+            start_index + j,
+            prompts[(start_index + j) % len(prompts)],
+            _sample_target_words(rng, target_len_mean, target_len_std, target_len_min, target_len_max),
+        )
         for j in range(target_count)
     ]
     total = len(items)
@@ -188,7 +209,7 @@ def _generate_batch_transformers(
         print(f"  [batch {b+1}/{n_batches}] {len(batch_items)} prompt isleniyor...", flush=True)
         outputs = pipe(
             messages_batch,
-            max_new_tokens=_MAX_NEW_TOKENS,
+            max_new_tokens=max_new_tokens,
             do_sample=True,
             temperature=0.7,
             pad_token_id=pipe.tokenizer.eos_token_id,

@@ -15,12 +15,17 @@ Embedding ciktisi --skip-embeddings bayragi ile atlanabilir (Stanza modeli yoksa
 from __future__ import annotations
 
 import argparse
+import json
 from collections import Counter
 
+import numpy as np
 import pandas as pd
 
 from humanai_detect.config import PROJECT_ROOT, load_yaml
 from humanai_detect.features.aggregator import extract_all_features
+from humanai_detect.fusion.length_residualize import (
+    fit_length_residualizer, apply_length_residualizer_df,
+)
 from humanai_detect.preprocessing.schemas import ProcessedSample
 from humanai_detect.utils.io import read_jsonl, write_parquet
 
@@ -216,6 +221,7 @@ def main() -> None:
     # --- Asama 3: Stilometrik ozellikler ---
     all_samples: list[ProcessedSample] = []
     rows: list[dict] = []
+    token_counts: list[int] = []
     for label in LABELS:
         samples = _load_samples(interim_dir, label)
         if not samples:
@@ -228,6 +234,7 @@ def main() -> None:
             feats["sample_id"] = sample.id
             feats["label"] = sample.label
             rows.append(feats)
+            token_counts.append(sample.token_count)
             if i % 10 == 0 or i == len(samples):
                 print(f"  [{i}/{len(samples)}] {label}", flush=True)
 
@@ -238,6 +245,27 @@ def main() -> None:
     df = pd.DataFrame(rows)
     cols = ["sample_id", "label"] + [c for c in df.columns if c not in ("sample_id", "label")]
     df = df[cols]
+
+    # --- Uzunluk-confound residualizasyonu (SHAP top-4 ozellik) ---
+    # train_mask: held-out set zaten belirlenmisse (holdout_ids.txt), residualizasyon
+    # regresyonu SADECE dev havuzundan fit edilir (sizinti onleme, standardize.py'deki
+    # train_mask deseniyle ayni mantik).
+    token_counts_arr = np.array(token_counts, dtype=float)
+    holdout_path = processed_dir / "holdout_ids.txt"
+    train_mask = None
+    if holdout_path.exists():
+        holdout_ids = set(holdout_path.read_text(encoding="utf-8").splitlines())
+        train_mask = ~df["sample_id"].isin(holdout_ids).to_numpy()
+        print(f"[length-residualize] train_mask: {train_mask.sum()}/{len(df)} ornek (held-out haric fit)")
+    else:
+        print("[length-residualize] holdout_ids.txt yok, TUM veriyle fit ediliyor (henuz holdout ayrilmamis).")
+
+    length_params = fit_length_residualizer(df, token_counts_arr, train_mask=train_mask)
+    df = apply_length_residualizer_df(df, token_counts_arr, length_params)
+    params_path = processed_dir / "length_residualizer.json"
+    params_path.write_text(json.dumps(length_params, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[length-residualize] {list(length_params.keys())} -> {params_path}")
+
     out_path = processed_dir / "stylometric.parquet"
     write_parquet(df, out_path)
     print(f"[stilometri] {len(df)} ornek, {len(df.columns)-2} ozellik -> {out_path}")

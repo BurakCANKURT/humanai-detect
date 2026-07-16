@@ -177,3 +177,37 @@ def test_load_prompts_skips_comments_and_blank_lines(tmp_path: Path) -> None:
     prompts = load_prompts(prompts_file)
 
     assert prompts == ["ilk prompt", "ikinci prompt"]
+
+
+# ---------------------------------------------------------------------------
+# _sample_target_words: kisa-pilot verisi icin parametrelestirme (bkz.
+# scripts/collect_short_pilot.py, [[project-codebase]] 2026-07-16)
+# ---------------------------------------------------------------------------
+
+import random
+
+from humanai_detect.data_collection.llm_generators import (
+    _TARGET_LEN_MAX, _TARGET_LEN_MEAN, _TARGET_LEN_MIN, _TARGET_LEN_STD, _sample_target_words,
+)
+
+
+def test_sample_target_words_default_matches_main_dataset_range() -> None:
+    rng = random.Random(0)
+    for _ in range(50):
+        val = _sample_target_words(rng)
+        assert _TARGET_LEN_MIN <= val <= _TARGET_LEN_MAX
+
+
+def test_sample_target_words_custom_range_for_short_pilot() -> None:
+    rng = random.Random(0)
+    for _ in range(50):
+        val = _sample_target_words(rng, mean=15, std=6, min_words=5, max_words=30)
+        assert 5 <= val <= 30
+
+
+def test_sample_target_words_clips_to_custom_bounds() -> None:
+    rng = random.Random(0)
+    # std=0.001 ile ortalamaya cok yakin degerler uretilir, min/max'in ISE
+    # yaramasi icin ortalamayi sinirin disina koyuyoruz.
+    val = _sample_target_words(rng, mean=1000, std=0.001, min_words=5, max_words=30)
+    assert val == 30

@@ -12,6 +12,21 @@ human:
     yok_tez: yok_tez
     manual_corpus: manual_corpus
 
+# Kisa-metin pilot verisi (bkz. scripts/collect_short_pilot.py, [[project-codebase]] 2026-07-16):
+# min_tokens=30 sinirinin ALTINI hic gormeyen modelin bu bolgede OOD/asiri-guvenli
+# davranmasini (kisa metinde her zaman "human") duzeltmek icin ayri bir kucuk havuz.
+# Ana 3000/sinif veri setine (data/raw/{label}/) DOKUNMAZ, ayri data/raw/{label}_short/
+# altina yazilir.
+short_pilot:
+  target_count_per_class: 300
+  target_len_mean: 15
+  target_len_std: 6
+  target_len_min: 5
+  target_len_max: 30
+  max_new_tokens: 60       # kisa hedef icin ana veri setinin 4500'una gerek yok, cok daha hizli
+  human_min_words: 5
+  human_max_words: 30
+
 llm_generators:
   prompts_file: configs/prompts.txt
   openai:

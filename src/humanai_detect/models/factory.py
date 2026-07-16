@@ -6,11 +6,34 @@ from typing import Any
 
 
 def build_model(name: str, params: dict[str, Any]):
-    """name (xgboost|catboost|mlp|logreg) icin yapilandirilmis estimator dondurur.
+    """name (xgboost|catboost|mlp|logreg|stacking) icin yapilandirilmis estimator dondurur.
 
     params, configs/models.yaml'in ilgili alt sozlugunun ustune override edilebilecek
     hiperparametreleri icerir; eksik degerler YAML varsayilanlariyla tamamlanir.
+
+    params["calibrate"]=True verilirse (stacking haric — stacking kendi base
+    modellerini stacking.py uzerinden ayri ayri kalibre eder), model
+    CalibratedClassifierCV ile sarilir: XGBoost/CatBoost gibi agac modelleri
+    dogasi geregi doygun (0/1'e yakin) olasilik uretir, bu sarma olasiliklari
+    isotonic regresyonla yeniden kalibre eder (bkz. [[project-codebase]] —
+    kisa/OOD metinde her zaman %100.00 "human" cikmasi buradan kaynaklaniyordu).
     """
+    model = _build_raw_model(name, params)
+
+    if name != "stacking" and params.get("calibrate", False):
+        from sklearn.calibration import CalibratedClassifierCV
+
+        model = CalibratedClassifierCV(
+            model,
+            method=params.get("calibrate_method", "isotonic"),
+            cv=params.get("calibrate_cv", 5),
+        )
+
+    return model
+
+
+def _build_raw_model(name: str, params: dict[str, Any]):
+    """Kalibrasyon sarmalamasi olmadan cig (raw) estimator uretir."""
     rs = params.get("random_state", 42)
     cw = params.get("class_weight", "balanced")
 
