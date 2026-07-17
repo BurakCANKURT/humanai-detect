@@ -45,6 +45,13 @@ LABEL_TR = {
 }
 MODEL_FILE = "stacking_final_production.pkl"
 
+BINARY_LABEL_NAMES = ["human", "ai"]
+BINARY_LABEL_TR = {
+    "human": "İnsan Yazımı",
+    "ai": "Yapay Zeka Üretimi (ham veya insanlaştırılmış, ayrım yapılmıyor)",
+}
+BINARY_MODEL_FILE = "_diag_after_calibrated_binary.pkl"
+
 
 @dataclass
 class PredictionResult:
@@ -62,7 +69,14 @@ class PredictionResult:
 class InferenceEngine:
     """Model + artefaktlari bir kez yukleyip tekrar tekrar tahmin yapmak icin."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        model_file: str = MODEL_FILE,
+        label_names: list[str] = LABEL_NAMES,
+        label_tr: dict[str, str] = LABEL_TR,
+    ) -> None:
+        self._label_names = label_names
+        self._label_tr = label_tr
         self._features_cfg = load_yaml("features")
         self._preprocessing_cfg = load_yaml("preprocessing")
         self._emb_cfg = load_yaml("embeddings")
@@ -91,7 +105,7 @@ class InferenceEngine:
         )
 
         import pickle
-        model_path = PROJECT_ROOT / "outputs" / "models" / MODEL_FILE
+        model_path = PROJECT_ROOT / "outputs" / "models" / model_file
         with open(model_path, "rb") as f:
             self._model = pickle.load(f)
 
@@ -162,12 +176,12 @@ class InferenceEngine:
         x = np.concatenate([sty_std, emb_std]).astype(np.float32).reshape(1, -1)
         proba = self._model.predict_proba(x)[0]
         pred_idx = int(np.argmax(proba))
-        pred_label = LABEL_NAMES[pred_idx]
+        pred_label = self._label_names[pred_idx]
 
         return PredictionResult(
             label=pred_label,
-            label_tr=LABEL_TR[pred_label],
-            probabilities={LABEL_NAMES[i]: float(proba[i]) for i in range(len(LABEL_NAMES))},
+            label_tr=self._label_tr[pred_label],
+            probabilities={self._label_names[i]: float(proba[i]) for i in range(len(self._label_names))},
             token_count=token_count,
             sentence_count=sentence_count,
             perplexity=perplexity,
@@ -177,11 +191,23 @@ class InferenceEngine:
         )
 
 
-_ENGINE: InferenceEngine | None = None
+_ENGINES: dict[str, InferenceEngine] = {}
 
 
-def get_engine() -> InferenceEngine:
-    global _ENGINE
-    if _ENGINE is None:
-        _ENGINE = InferenceEngine()
-    return _ENGINE
+def get_engine(variant: str = "production") -> InferenceEngine:
+    """variant='production' -> 3-sinifli nihai model, 'binary' -> deneysel insan/AI ikili model.
+
+    Her iki varyant da AYNI arayuz/artifacts/ (scaler, referans, length_residualizer) dosyalarini
+    kullanir -- ozellik cikarim pipeline'i degismiyor, sadece nihai siniflandirici ve etiket
+    kumesi farkli.
+    """
+    if variant not in _ENGINES:
+        if variant == "binary":
+            _ENGINES[variant] = InferenceEngine(
+                model_file=BINARY_MODEL_FILE,
+                label_names=BINARY_LABEL_NAMES,
+                label_tr=BINARY_LABEL_TR,
+            )
+        else:
+            _ENGINES[variant] = InferenceEngine()
+    return _ENGINES[variant]
