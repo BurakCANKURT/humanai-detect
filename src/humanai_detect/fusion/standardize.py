@@ -14,6 +14,11 @@ def zscore_standardize(
     train_mask verilirse mean/std sadece egitim orneklerinden hesaplanir
     (veri sizintisini onler); tum satirlar donusturulur.
 
+    NaN degerler (orn. tek-cumlelik metinde tanimsiz burstiness) mean/std hesabinda
+    goz ardi edilir (nanmean/nanstd) -- boylece bir sutunda birkac NaN olmasi o sutunun
+    TAMAMINI bozmaz. Sonucta kalan NaN (o satirin kendi degeri eksikse) 0'a (ortalamaya)
+    impute edilir.
+
     Donus: (standardize_edilmis_matrix, mean_vektoru, std_vektoru)
     """
     if train_mask is not None:
@@ -21,11 +26,12 @@ def zscore_standardize(
     else:
         fit_data = features
 
-    mean = fit_data.mean(axis=0)
-    std = fit_data.std(axis=0)
+    mean = np.nanmean(fit_data, axis=0)
+    std = np.nanstd(fit_data, axis=0)
     std = np.where(std == 0, 1.0, std)  # sifir std -> bolme hatasi onle
 
-    return (features - mean) / std, mean, std
+    standardized = (features - mean) / std
+    return np.nan_to_num(standardized, nan=0.0), mean, std
 
 
 def robust_standardize(
@@ -35,14 +41,18 @@ def robust_standardize(
     """Robust standardizasyon: (X - median) / IQR.
 
     Aykiri degerlere duyarsizdir; perplexity gibi sag-carpik dagilimlar icin uygundur.
+    NaN degerler median/IQR hesabinda goz ardi edilir (nanmedian/nanpercentile), kalan
+    NaN satirlar 0'a impute edilir (bkz. zscore_standardize).
+
     Donus: (standardize_edilmis_matrix, median_vektoru, iqr_vektoru)
     """
     fit_data = features[train_mask] if train_mask is not None else features
-    median = np.median(fit_data, axis=0)
-    q75, q25 = np.percentile(fit_data, [75, 25], axis=0)
+    median = np.nanmedian(fit_data, axis=0)
+    q75, q25 = np.nanpercentile(fit_data, [75, 25], axis=0)
     iqr = q75 - q25
     iqr = np.where(iqr == 0, 1.0, iqr)
-    return (features - median) / iqr, median, iqr
+    standardized = (features - median) / iqr
+    return np.nan_to_num(standardized, nan=0.0), median, iqr
 
 
 def standardize(

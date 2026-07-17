@@ -7,17 +7,24 @@ from collections import Counter
 
 
 def ngram_entropy(tokens: list[str], n: int) -> float:
-    """n-gram dagiliminin Shannon entropisini bit cinsinden hesaplar.
+    """n-gram dagiliminin Shannon entropisini bit cinsinden hesaplar (Miller-Madow duzeltmeli).
 
     Yuksek entropi -> cesitli n-gram kullanimi (dogal dile benzer).
     Dusuk entropi -> tekrara dayali, ogrenilebilir yapi (AI ciktisina benzer).
+
+    Plug-in Shannon tahmini kucuk orneklemde (N kucukken, kisa metinlerde oldugu gibi)
+    sistematik olarak dusuk cikar; Miller-Madow duzeltmesi (K-1)/(2N ln2) bu yanliligi
+    telafi eder. N buyudukce (uzun metin) katki ihmal edilebilir hale gelir, yani ayni
+    formul hem kisa hem uzun metinde tutarli kalir.
     """
     if len(tokens) < n or n < 1:
         return 0.0
     ngrams = [tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)]
     counts = Counter(ngrams)
     total = len(ngrams)
-    return -sum((c / total) * math.log2(c / total) for c in counts.values())
+    entropy = -sum((c / total) * math.log2(c / total) for c in counts.values())
+    correction = (len(counts) - 1) / (2 * total * math.log(2))
+    return entropy + correction
 
 
 def kl_divergence_word_freq(

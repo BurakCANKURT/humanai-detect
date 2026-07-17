@@ -1,13 +1,25 @@
-"""Metin uzunluguna (token_count) asiri duyarli stilometrik ozellikleri (SHAP top-4)
-log-uzunluk uzerinden residualize ederek uzunluk-invaryant hale getirir.
+"""Metin uzunluguna (token_count) asiri duyarli stilometrik ozellikleri log-uzunluk
+uzerinden residualize ederek uzunluk-invaryant hale getirir.
 
 Motivasyon: kl_div_word_freq, entropy_2gram, entropy_3gram, burstiness metin uzunluguna
 sistematik olarak duyarli --  n-gram entropisi kucuk orneklemde dusuk kalir (kucuk-ornek
-yanliligi), KL sapmasi az kelimeyle daha gurultulu/sisirilmis olur, burstiness az cumleyle
-guvenilmez olur (Goh-Barabasi formulunun varyans tahmini kucuk n'de kararsizdir). Bu, modelin
-"insan/AI" farkinin yaninda kismen "uzun/kisa metin" ogrenmesine yol acan bir confound'dur
-(bkz. proje SHAP analizi: bu 4 ozellik en etkili 4 ozellik cikti, ayrica kalibrasyon uygulandiktan
-sonra dahi kisa/OOD metinde model her zaman "human" tahmin etmeye devam etti).
+yanliligi, entropy_1gram icin artik statistical.py::ngram_entropy'deki Miller-Madow
+duzeltmesiyle kismen giderildi ama kalan egilim burada da temizlenir), KL sapmasi az
+kelimeyle daha gurultulu/sisirilmis olur, burstiness az cumleyle guvenilmez olur
+(Goh-Barabasi formulunun varyans tahmini kucuk n'de kararsizdir). Bu, modelin "insan/AI"
+farkinin yaninda kismen "uzun/kisa metin" ogrenmesine yol acan bir confound'dur (bkz. proje
+SHAP analizi: bu 4 ozellik en etkili 4 ozellik cikti, ayrica kalibrasyon uygulandiktan sonra
+dahi kisa/OOD metinde model her zaman "human" tahmin etmeye devam etti).
+
+**2026-07-17 genisletme:** guncel 9479-orneklik veride tum stilometrik ozelliklerin
+token_count ile Spearman korelasyonu olculdu (bkz. proje notlari) -- residualize
+EDILMEMIS 5 ozellik hala guclu uzunluk-confound'u tasiyordu: pos_punct (r=0.50),
+ttr (r=0.43), hapax_ratio (r=0.41), entropy_1gram (r=0.38), yule_k (r=0.30). TTR icin
+literaturdeki standart alternatif MATTR (hareketli pencere ortalamali TTR) degerlendirildi
+ama reddedildi: MATTR penceresi (tipik 25-50 kelime) kisa-pilot metinlerinden (5-30 kelime)
+BUYUK oldugunda pencere=metin uzunluguna esitlenip ham TTR'a donusuyor -- tam da duzeltmek
+istedigimiz kisa-metin araliginda hicbir fayda saglamiyor. Bunun yerine ayni (kanitlanmis
+calisan) residualizasyon teknigi bu 5 ozellige de uygulandi.
 
 Yontem: her feature icin egitim (train_mask) alt kumesinde log1p(token_count) -> feature
 lineer regresyonu fit edilir; sonra TUM orneklerde deger, bu regresyonun ARTIGI (residual)
@@ -22,7 +34,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-LENGTH_SENSITIVE_FEATURES = ["kl_div_word_freq", "entropy_2gram", "entropy_3gram", "burstiness"]
+LENGTH_SENSITIVE_FEATURES = [
+    "kl_div_word_freq",
+    "entropy_2gram",
+    "entropy_3gram",
+    "burstiness",
+    "pos_punct",
+    "ttr",
+    "hapax_ratio",
+    "entropy_1gram",
+    "yule_k",
+]
 
 
 def fit_length_residualizer(

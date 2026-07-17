@@ -28,6 +28,7 @@ from humanai_detect.preprocessing import (
 from humanai_detect.utils.io import read_jsonl, write_jsonl
 
 LABELS = ["human", "ai_raw", "ai_humanized"]
+SHORT_LABELS = ["human_short", "ai_raw_short", "ai_humanized_short"]
 
 
 _STANZA_WORD_LIMIT = 500  # Stanza depparse icin max kelime (hiz siniri)
@@ -168,17 +169,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--label",
-        choices=[*LABELS, "all"],
+        choices=[*LABELS, *SHORT_LABELS, "all"],
         default="all",
         help="Hangi sinif icin on isleme yapilacak",
     )
     parser.add_argument("--input-dir", default=None, help="data/raw dizini (varsayilan: configs/paths.yaml)")
     parser.add_argument("--output-dir", default=None, help="data/interim dizini (varsayilan: configs/paths.yaml)")
     parser.add_argument("--limit", type=int, default=None, help="Sinif basina en fazla kac ornek islenecek (hizli pilot/benchmark icin)")
+    parser.add_argument("--min-tokens", type=int, default=None, help="configs/preprocessing.yaml min_tokens degerini bu calisma icin gecersiz kilar (kisa-pilot verisi icin gerekli)")
+    parser.add_argument("--max-tokens", type=int, default=None, help="configs/preprocessing.yaml max_tokens degerini bu calisma icin gecersiz kilar")
     args = parser.parse_args()
 
     paths_cfg = load_yaml("paths")
     preprocessing_cfg = load_yaml("preprocessing")
+    if args.min_tokens is not None:
+        preprocessing_cfg["min_tokens"] = args.min_tokens
+    if args.max_tokens is not None:
+        preprocessing_cfg["max_tokens"] = args.max_tokens
 
     input_dir = PROJECT_ROOT / (args.input_dir or paths_cfg["raw_dir"])
     output_dir = PROJECT_ROOT / (args.output_dir or paths_cfg["interim_dir"])

@@ -31,7 +31,6 @@ def fuse(
     sty_cols = [c for c in stylometric_df.columns if c not in meta_cols]
     sty_arr = stylometric_df[sty_cols].to_numpy(dtype=np.float32)
     sty_std, _, _ = standardize(sty_arr, method=fusion_cfg.get("scaler", "zscore"), train_mask=train_mask)
-    sty_std = np.nan_to_num(sty_std, nan=0.0)  # NaN referans ozellikleri -> 0
 
     parts = [sty_std]
     names = list(sty_cols)

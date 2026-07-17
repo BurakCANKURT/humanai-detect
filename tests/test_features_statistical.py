@@ -9,10 +9,11 @@ from humanai_detect.features import statistical
 
 class TestNgramEntropy:
     def test_uniform_max_entropy(self):
-        # Hepsi farkli unigram -> max entropy = log2(n)
+        # Hepsi farkli unigram -> plug-in max entropy = log2(n) + Miller-Madow duzeltmesi
         tokens = ["a", "b", "c", "d"]
         result = statistical.ngram_entropy(tokens, 1)
-        assert math.isclose(result, math.log2(4), rel_tol=1e-6)
+        expected = math.log2(4) + (4 - 1) / (2 * 4 * math.log(2))
+        assert math.isclose(result, expected, rel_tol=1e-6)
 
     def test_all_same_zero_entropy(self):
         tokens = ["a", "a", "a", "a"]

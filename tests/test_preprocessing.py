@@ -64,13 +64,15 @@ class TestComputeBurstiness:
         result = compute_burstiness([10, 10, 10, 10])
         assert math.isclose(result, -1.0)
 
-    def test_single_element_returns_zero(self):
+    def test_single_element_returns_nan(self):
         from humanai_detect.preprocessing.burstiness import compute_burstiness
-        assert compute_burstiness([5]) == 0.0
+        # Varyans tek elemanla tanimsiz -- sabit 0.0 (yanlislikla "duzenli" anlamina gelir)
+        # yerine NaN donmeli, boylece eksik bilgi gercek bir degerle karistirilmaz.
+        assert math.isnan(compute_burstiness([5]))
 
-    def test_empty_returns_zero(self):
+    def test_empty_returns_nan(self):
         from humanai_detect.preprocessing.burstiness import compute_burstiness
-        assert compute_burstiness([]) == 0.0
+        assert math.isnan(compute_burstiness([]))
 
     def test_varied_lengths_positive(self):
         from humanai_detect.preprocessing.burstiness import compute_burstiness

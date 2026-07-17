@@ -51,6 +51,26 @@ class TestZscoreStandardize:
         with pytest.raises(ValueError):
             standardize(np.eye(2), method="l2")
 
+    def test_nan_row_does_not_poison_column(self):
+        from humanai_detect.fusion.standardize import zscore_standardize
+        # 3. satirin 2. sutunu eksik (orn. tek-cumlelik metinde burstiness NaN)
+        X = np.array([[1.0, 10.0], [2.0, 20.0], [3.0, np.nan]])
+        Xs, mean, std = zscore_standardize(X)
+        # mean/std sadece o sutunun eksik-olmayan degerlerinden hesaplanmali
+        assert math.isclose(mean[1], 15.0)
+        # eksik satirin kendi degeri 0'a (ortalamaya) impute edilmeli, NaN kalmamali
+        assert np.all(np.isfinite(Xs))
+        assert math.isclose(Xs[2, 1], 0.0, abs_tol=1e-9)
+        # diger sutun (NaN icermeyen) bu satirdan etkilenmemeli
+        assert math.isclose(Xs[0, 0], (1.0 - 2.0) / std[0], rel_tol=1e-6)
+
+    def test_robust_standardize_nan_aware(self):
+        from humanai_detect.fusion.standardize import robust_standardize
+        X = np.array([[1.0], [2.0], [3.0], [np.nan]])
+        Xs, median, iqr = robust_standardize(X)
+        assert math.isclose(median[0], 2.0)
+        assert np.all(np.isfinite(Xs))
+
 
 # ---------------------------------------------------------------------------
 # clustering.py
