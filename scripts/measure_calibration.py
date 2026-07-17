@@ -25,24 +25,27 @@ from humanai_detect.models.train import train_final_model
 LABEL_NAMES = ["human", "ai_raw", "ai_humanized"]
 LABEL_TO_INT = {lbl: i for i, lbl in enumerate(LABEL_NAMES)}
 
+BINARY_LABEL_NAMES = ["human", "ai"]
+BINARY_LABEL_TO_INT = {lbl: i for i, lbl in enumerate(BINARY_LABEL_NAMES)}
 
-def _multiclass_brier(y_true: np.ndarray, y_proba: np.ndarray, n_classes: int = 3) -> dict[str, float]:
+
+def _multiclass_brier(y_true: np.ndarray, y_proba: np.ndarray, label_names: list[str]) -> dict[str, float]:
     """Her sinif icin one-vs-rest Brier skoru + ortalama."""
     per_class = {}
-    for c in range(n_classes):
+    for c, lbl in enumerate(label_names):
         y_bin = (y_true == c).astype(int)
-        per_class[LABEL_NAMES[c]] = float(brier_score_loss(y_bin, y_proba[:, c]))
+        per_class[lbl] = float(brier_score_loss(y_bin, y_proba[:, c]))
     per_class["mean"] = float(np.mean(list(per_class.values())))
     return per_class
 
 
-def _reliability_bins(y_true: np.ndarray, y_proba: np.ndarray, n_classes: int = 3, n_bins: int = 10):
+def _reliability_bins(y_true: np.ndarray, y_proba: np.ndarray, label_names: list[str], n_bins: int = 10):
     """Her sinif icin (bin_ortalama_tahmin, bin_gercek_oran) noktalarini dondurur."""
     bins = {}
-    for c in range(n_classes):
+    for c, lbl in enumerate(label_names):
         y_bin = (y_true == c).astype(int)
         prob_true, prob_pred = calibration_curve(y_bin, y_proba[:, c], n_bins=n_bins, strategy="uniform")
-        bins[LABEL_NAMES[c]] = {
+        bins[lbl] = {
             "prob_pred": [float(x) for x in prob_pred],
             "prob_true": [float(x) for x in prob_true],
         }
@@ -66,7 +69,12 @@ def main() -> None:
                          help="Sadece bir asamayi calistir (once olculenleri tekrar etmemek icin)")
     parser.add_argument("--save-models", action="store_true",
                          help="Egitilen modelleri outputs/models/_diag_<tag>.pkl olarak kaydet (kisa-metin tanisi icin)")
+    parser.add_argument("--binary", action="store_true",
+                         help="3 sinif yerine ikili (human vs ai_raw+ai_humanized birlesik 'ai') olc")
     args = parser.parse_args()
+
+    label_names = BINARY_LABEL_NAMES if args.binary else LABEL_NAMES
+    label_to_int = BINARY_LABEL_TO_INT if args.binary else LABEL_TO_INT
 
     paths_cfg = load_yaml("paths")
     models_cfg = load_yaml("models")
@@ -78,6 +86,11 @@ def main() -> None:
     dev_df = fused_df[~fused_df["sample_id"].isin(holdout_ids)].reset_index(drop=True)
     hold_df = fused_df[fused_df["sample_id"].isin(holdout_ids)].reset_index(drop=True)
 
+    if args.binary:
+        dev_df["label"] = dev_df["label"].where(dev_df["label"] == "human", "ai")
+        hold_df["label"] = hold_df["label"].where(hold_df["label"] == "human", "ai")
+        print(f"[calib] --binary: ai_raw/ai_humanized 'ai' altinda birlestirildi ({label_names})")
+
     min_n = dev_df["label"].value_counts().min()
     dev_df = pd.concat(
         [g.sample(n=min_n, random_state=42) for _, g in dev_df.groupby("label")],
@@ -87,9 +100,9 @@ def main() -> None:
 
     feat_cols = [c for c in dev_df.columns if c not in ("sample_id", "label")]
     X_dev = dev_df[feat_cols].to_numpy(dtype=np.float32)
-    y_dev = dev_df["label"].map(LABEL_TO_INT).to_numpy()
+    y_dev = dev_df["label"].map(label_to_int).to_numpy()
     X_hold = hold_df[feat_cols].to_numpy(dtype=np.float32)
-    y_hold = hold_df["label"].map(LABEL_TO_INT).to_numpy()
+    y_hold = hold_df["label"].map(label_to_int).to_numpy()
 
     stage_map = {
         "before": [("before_uncalibrated", False)],
@@ -105,7 +118,8 @@ def main() -> None:
         model = train_final_model(X_dev, y_dev, "stacking", cfg)
 
         if args.save_models:
-            diag_path = PROJECT_ROOT / paths_cfg["models_dir"] / f"_diag_{tag}.pkl"
+            diag_tag = f"{tag}_binary" if args.binary else tag
+            diag_path = PROJECT_ROOT / paths_cfg["models_dir"] / f"_diag_{diag_tag}.pkl"
             diag_path.parent.mkdir(parents=True, exist_ok=True)
             with open(diag_path, "wb") as f:
                 pickle.dump(model, f)
@@ -116,9 +130,9 @@ def main() -> None:
 
         acc = float(accuracy_score(y_hold, y_pred))
         macro_f1 = float(f1_score(y_hold, y_pred, average="macro", zero_division=0))
-        brier = _multiclass_brier(y_hold, y_proba)
+        brier = _multiclass_brier(y_hold, y_proba, label_names)
         max_stats = _max_proba_stats(y_proba)
-        bins = _reliability_bins(y_hold, y_proba)
+        bins = _reliability_bins(y_hold, y_proba, label_names)
 
         print(f"[calib] {tag}: acc={acc:.4f} macro_f1={macro_f1:.4f} brier_mean={brier['mean']:.4f} "
               f"max_proba_mean={max_stats['mean']:.4f} frac>0.999={max_stats['frac_above_0.999']:.4f}")
@@ -133,7 +147,8 @@ def main() -> None:
 
     out_dir = PROJECT_ROOT / paths_cfg["reports_dir"] / "cv_results"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"calibration_before_after_{args.stage}.json"
+    stage_tag = f"{args.stage}_binary" if args.binary else args.stage
+    out_path = out_dir / f"calibration_before_after_{stage_tag}.json"
     out_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n[calib] -> {out_path}")
 
@@ -145,14 +160,15 @@ def main() -> None:
         md_lines.append(f"| Accuracy | {b['accuracy']:.4f} | {a['accuracy']:.4f} |")
         md_lines.append(f"| Macro-F1 | {b['macro_f1']:.4f} | {a['macro_f1']:.4f} |")
         md_lines.append(f"| Brier (ortalama) | {b['brier_score']['mean']:.4f} | {a['brier_score']['mean']:.4f} |")
-        for lbl in LABEL_NAMES:
+        for lbl in label_names:
             md_lines.append(f"| Brier ({lbl}) | {b['brier_score'][lbl]:.4f} | {a['brier_score'][lbl]:.4f} |")
         md_lines.append(f"| Ort. max-olasilik | {b['max_proba_stats']['mean']:.4f} | {a['max_proba_stats']['mean']:.4f} |")
         md_lines.append(
             f"| Oran(max-olasilik>0.999) | {b['max_proba_stats']['frac_above_0.999']:.4f} | "
             f"{a['max_proba_stats']['frac_above_0.999']:.4f} |"
         )
-        (out_dir / "calibration_before_after.md").write_text("\n".join(md_lines), encoding="utf-8")
+        md_name = "calibration_before_after_binary.md" if args.binary else "calibration_before_after.md"
+        (out_dir / md_name).write_text("\n".join(md_lines), encoding="utf-8")
 
 
 if __name__ == "__main__":

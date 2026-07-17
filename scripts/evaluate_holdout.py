@@ -24,6 +24,9 @@ from humanai_detect.models.hierarchical import train_final_hierarchical
 LABEL_NAMES = ["human", "ai_raw", "ai_humanized"]
 LABEL_TO_INT = {lbl: i for i, lbl in enumerate(LABEL_NAMES)}
 
+BINARY_LABEL_NAMES = ["human", "ai"]
+BINARY_LABEL_TO_INT = {lbl: i for i, lbl in enumerate(BINARY_LABEL_NAMES)}
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -33,7 +36,17 @@ def main() -> None:
                          help="Gelistirme havuzunu dengele (varsayilan: acik)")
     parser.add_argument("--balance-holdout", action="store_true",
                          help="Held-out seti de dengele (varsayilan: dogal dagilimla degerlendir)")
+    parser.add_argument("--binary", action="store_true",
+                         help="3 sinif yerine ikili (human vs ai_raw+ai_humanized birlesik 'ai') degerlendir")
     args = parser.parse_args()
+
+    if args.binary and args.model == "hierarchical":
+        print("[holdout-eval] --binary ile --model hierarchical bir arada anlamsiz.")
+        return
+
+    label_names = BINARY_LABEL_NAMES if args.binary else LABEL_NAMES
+    label_to_int = BINARY_LABEL_TO_INT if args.binary else LABEL_TO_INT
+    n_classes = len(label_names)
 
     paths_cfg = load_yaml("paths")
     models_cfg = load_yaml("models")
@@ -49,6 +62,11 @@ def main() -> None:
     dev_df = fused_df[~fused_df["sample_id"].isin(holdout_ids)].reset_index(drop=True)
     hold_df = fused_df[fused_df["sample_id"].isin(holdout_ids)].reset_index(drop=True)
     print(f"[holdout-eval] gelistirme havuzu: {len(dev_df)}, held-out: {len(hold_df)}")
+
+    if args.binary:
+        dev_df["label"] = dev_df["label"].where(dev_df["label"] == "human", "ai")
+        hold_df["label"] = hold_df["label"].where(hold_df["label"] == "human", "ai")
+        print(f"[holdout-eval] --binary: ai_raw/ai_humanized 'ai' altinda birlestirildi ({label_names})")
 
     if args.balance_dev:
         min_n = dev_df["label"].value_counts().min()
@@ -71,9 +89,9 @@ def main() -> None:
 
     feat_cols = [c for c in dev_df.columns if c not in ("sample_id", "label")]
     X_dev = dev_df[feat_cols].to_numpy(dtype=np.float32)
-    y_dev = dev_df["label"].map(LABEL_TO_INT).to_numpy()
+    y_dev = dev_df["label"].map(label_to_int).to_numpy()
     X_hold = hold_df[feat_cols].to_numpy(dtype=np.float32)
-    y_hold = hold_df["label"].map(LABEL_TO_INT).to_numpy()
+    y_hold = hold_df["label"].map(label_to_int).to_numpy()
 
     common = models_cfg.get("common", {})
     print(f"[holdout-eval] {args.model} gelistirme havuzunda egitiliyor ({len(X_dev)} ornek)...")
@@ -93,58 +111,64 @@ def main() -> None:
     print("[holdout-eval] held-out sette degerlendiriliyor (TEK SEFERLIK)...")
     y_pred = model.predict(X_hold)
 
-    per_class_f1 = f1_score(y_hold, y_pred, average=None, labels=[0, 1, 2], zero_division=0)
-    cm = confusion_matrix(y_hold, y_pred, labels=[0, 1, 2])
+    class_ids = list(range(n_classes))
+    per_class_f1 = f1_score(y_hold, y_pred, average=None, labels=class_ids, zero_division=0)
+    cm = confusion_matrix(y_hold, y_pred, labels=class_ids)
 
     roc_auc = None
     if hasattr(model, "predict_proba"):
         try:
             y_proba = model.predict_proba(X_hold)
-            roc_auc = float(roc_auc_score(y_hold, y_proba, multi_class="ovr"))
+            if n_classes == 2:
+                roc_auc = float(roc_auc_score(y_hold, y_proba[:, 1]))
+            else:
+                roc_auc = float(roc_auc_score(y_hold, y_proba, multi_class="ovr"))
         except Exception as e:
             print(f"[holdout-eval] ROC-AUC hesaplanamadi: {e}")
 
     result = {
         "model": args.model,
+        "binary": args.binary,
         "n_dev": int(len(X_dev)),
         "n_holdout": int(len(X_hold)),
         "accuracy": float(accuracy_score(y_hold, y_pred)),
         "macro_f1": float(f1_score(y_hold, y_pred, average="macro", zero_division=0)),
         "weighted_f1": float(f1_score(y_hold, y_pred, average="weighted", zero_division=0)),
-        "per_class_f1": {LABEL_NAMES[i]: float(per_class_f1[i]) for i in range(3)},
+        "per_class_f1": {label_names[i]: float(per_class_f1[i]) for i in range(n_classes)},
         "confusion_matrix": cm.tolist(),
-        "confusion_matrix_labels": LABEL_NAMES,
+        "confusion_matrix_labels": label_names,
         "roc_auc_ovr": roc_auc,
     }
 
     print(f"[holdout-eval] Accuracy={result['accuracy']:.4f}  Macro-F1={result['macro_f1']:.4f}")
     print(f"[holdout-eval] Per-class F1: {result['per_class_f1']}")
-    print(f"[holdout-eval] Confusion matrix ({LABEL_NAMES}):\n{cm}")
+    print(f"[holdout-eval] Confusion matrix ({label_names}):\n{cm}")
 
     report_dir = PROJECT_ROOT / paths_cfg["reports_dir"] / "cv_results"
     report_dir.mkdir(parents=True, exist_ok=True)
-    out_path = report_dir / f"{args.model}_holdout_eval.json"
+    name_tag = f"{args.model}_binary" if args.binary else args.model
+    out_path = report_dir / f"{name_tag}_holdout_eval.json"
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[holdout-eval] -> {out_path}")
 
     md_lines = [
-        f"# Held-out Test Sonuclari — {args.model}",
+        f"# Held-out Test Sonuclari — {name_tag}",
         f"\nGelistirme havuzu: {result['n_dev']} ornek, Held-out (hic gorulmemis): {result['n_holdout']} ornek",
         f"\n**Accuracy:** {result['accuracy']:.4f}",
         f"**Macro-F1:** {result['macro_f1']:.4f}",
         f"**Weighted-F1:** {result['weighted_f1']:.4f}",
-        f"**ROC-AUC (OvR):** {roc_auc:.4f}" if roc_auc is not None else "",
+        f"**ROC-AUC:** {roc_auc:.4f}" if roc_auc is not None else "",
         "\n| Sinif | F1 |",
         "|---|---|",
     ]
-    for lbl in LABEL_NAMES:
+    for lbl in label_names:
         md_lines.append(f"| {lbl} | {result['per_class_f1'][lbl]:.4f} |")
     md_lines.append("\n## Confusion Matrix (satir=gercek, sutun=tahmin)\n")
-    md_lines.append("| | " + " | ".join(LABEL_NAMES) + " |")
-    md_lines.append("|---|" + "---|" * 3)
-    for i, lbl in enumerate(LABEL_NAMES):
+    md_lines.append("| | " + " | ".join(label_names) + " |")
+    md_lines.append("|---|" + "---|" * n_classes)
+    for i, lbl in enumerate(label_names):
         md_lines.append(f"| **{lbl}** | " + " | ".join(str(x) for x in cm[i]) + " |")
-    (report_dir / f"{args.model}_holdout_eval.md").write_text("\n".join(md_lines), encoding="utf-8")
+    (report_dir / f"{name_tag}_holdout_eval.md").write_text("\n".join(md_lines), encoding="utf-8")
 
 
 if __name__ == "__main__":

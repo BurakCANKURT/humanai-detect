@@ -23,6 +23,9 @@ from humanai_detect.models.hierarchical import run_hierarchical_cv, train_final_
 LABEL_NAMES = ["human", "ai_raw", "ai_humanized"]
 LABEL_TO_INT = {lbl: i for i, lbl in enumerate(LABEL_NAMES)}
 
+BINARY_LABEL_NAMES = ["human", "ai"]
+BINARY_LABEL_TO_INT = {lbl: i for i, lbl in enumerate(BINARY_LABEL_NAMES)}
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -45,6 +48,9 @@ def main() -> None:
                              "(varsayilan: haric tutulur, bkz. make_holdout_split.py)")
     parser.add_argument("--tag", default=None,
                         help="Cikti dosya adina eklenecek ek etiket (orn. 'grouped')")
+    parser.add_argument("--binary", action="store_true",
+                        help="3 sinif yerine ikili (human vs ai_raw+ai_humanized birlesik 'ai') "
+                             "siniflandirma yap -- once AI/insan ayrimini tek basina cozmek icin")
     args = parser.parse_args()
 
     paths_cfg = load_yaml("paths")
@@ -75,6 +81,13 @@ def main() -> None:
         print(f"[train] held-out set haric tutuldu: {n_before} -> {len(df)} ornek "
               f"({len(holdout_ids)} held-out)")
 
+    if args.binary:
+        df["label"] = df["label"].where(df["label"] == "human", "ai")
+        label_names, label_to_int = BINARY_LABEL_NAMES, BINARY_LABEL_TO_INT
+        print(f"[train] --binary: ai_raw/ai_humanized 'ai' altinda birlestirildi ({label_names})")
+    else:
+        label_names, label_to_int = LABEL_NAMES, LABEL_TO_INT
+
     if args.balance:
         min_n = df["label"].value_counts().min()
         df = pd.concat(
@@ -87,11 +100,15 @@ def main() -> None:
 
     feat_cols = [c for c in df.columns if c not in ("sample_id", "label", "group_id")]
     X = df[feat_cols].to_numpy(dtype=np.float32)
-    y = df["label"].map(LABEL_TO_INT).to_numpy()
+    y = df["label"].map(label_to_int).to_numpy()
     cv_kind = "StratifiedGroupKFold" if use_groups else "StratifiedKFold"
     print(f"[train] {len(X)} ornek, {len(feat_cols)} ozellik, model={args.model}, cv={cv_kind}")
 
     model_name = args.model
+    if args.binary and model_name == "hierarchical":
+        print("[train] --binary ile --model hierarchical bir arada anlamsiz "
+              "(hierarchical zaten kendi icinde asama-A'da human/AI ikili ayrimi yapiyor).")
+        return
     common = models_cfg.get("common", {})
     if model_name == "stacking":
         model_params = models_cfg
@@ -122,6 +139,8 @@ def main() -> None:
 
     # CV raporunu kaydet
     name_tag = f"{model_name}_{args.tag}" if args.tag else model_name
+    if args.binary:
+        name_tag = f"{name_tag}_binary"
     report_dir = PROJECT_ROOT / paths_cfg["reports_dir"] / "cv_results"
     report_dir.mkdir(parents=True, exist_ok=True)
 
