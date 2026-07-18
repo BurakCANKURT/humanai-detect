@@ -7,13 +7,16 @@ Her RawSample icin:
   1. clean_text       -- unicode norm, gurultu temizligi
   2. linguistic.analyze -- Stanza: cumleler, tokenlar, POS, depparse (tek gecis)
   3. compute_perplexity -- masked-LM pseudo-PPL (dbmdz/bert-base-turkish-cased)
-  4. compute_burstiness -- Goh-Barabasi B parametresi
-  5. token_count filtresi -- [min_tokens, max_tokens] araligi disindakiler atilir
+  4. compute_perplexity (2. model) -- capraz-model perplexity orani icin (Binoculars-tarzi)
+  5. compute_token_rank_stats -- causal LM ile GLTR-tarzi rank istatistikleri
+  6. compute_burstiness -- Goh-Barabasi B parametresi
+  7. token_count filtresi -- [min_tokens, max_tokens] araligi disindakiler atilir
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import asdict
 
 from humanai_detect.config import PROJECT_ROOT, load_yaml
@@ -24,6 +27,7 @@ from humanai_detect.preprocessing import (
     clean_text,
     compute_burstiness,
     compute_perplexity,
+    compute_token_rank_stats,
 )
 from humanai_detect.utils.io import read_jsonl, write_jsonl
 
@@ -93,6 +97,14 @@ def process_sample(
     burstiness = compute_burstiness(sentence_lengths)
 
     perplexity = compute_perplexity(cleaned, preprocessing_cfg["perplexity_model_id"])
+    perplexity_2 = compute_perplexity(cleaned, preprocessing_cfg["perplexity_ratio_model_id"])
+    perplexity_ratio = (
+        perplexity / perplexity_2
+        if math.isfinite(perplexity) and math.isfinite(perplexity_2) and perplexity_2 > 0
+        else 1.0
+    )
+
+    rank_stats = compute_token_rank_stats(cleaned, preprocessing_cfg["causal_lm_model_id"])
 
     # VRAM birikimini onle
     try:
@@ -118,6 +130,12 @@ def process_sample(
         sentence_count=len(result["sentences"]),
         perplexity=perplexity,
         burstiness=burstiness,
+        perplexity_ratio=perplexity_ratio,
+        mean_token_rank=rank_stats["mean_token_rank"],
+        frac_rank_top1=rank_stats["frac_rank_top1"],
+        frac_rank_top5=rank_stats["frac_rank_top5"],
+        frac_rank_top10=rank_stats["frac_rank_top10"],
+        rank_entropy=rank_stats["rank_entropy"],
     )
 
 

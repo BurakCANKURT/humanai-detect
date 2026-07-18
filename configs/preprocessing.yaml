@@ -9,3 +9,10 @@ max_tokens: 850   # AI uretiminin (Qwen2.5-7B-Instruct) guvenilir sekilde ulasab
 lowercase: false
 
 perplexity_model_id: dbmdz/bert-base-turkish-cased
+
+# Capraz-model perplexity orani (Binoculars-tarzi) icin 2. maskeli LM -- farkli mimari/egitim
+# rejimi, ayni metne farkli "sasirma" profili verir, tek-model perplexity'den daha dayanikli sinyal.
+perplexity_ratio_model_id: dbmdz/distilbert-base-turkish-cased
+
+# Token-rank / GLTR-tarzi ozellikler icin causal LM (soldan-saga tahmin gerektirir, maskeli LM yetmez).
+causal_lm_model_id: redrussianarmy/gpt2-turkish-cased

@@ -19,13 +19,29 @@ statistical:
     orders: [1, 2, 3]
   kl_divergence_word_freq: true
   perplexity: true
+  perplexity_ratio: true  # capraz-model (Binoculars-tarzi) perplexity orani
   burstiness_index: true
   token_entropy_drop: true
+
+# GLTR-tarzi token-rank ozellikleri (causal LM gerektirir, preprocess asamasinda hesaplanir)
+token_rank:
+  mean_rank: true
+  frac_rank_top1: true
+  frac_rank_top5: true
+  frac_rank_top10: true
+  rank_entropy: true
 
 discourse:
   conjunction_density: true
   conjunction_deviation_index: true
   function_word_ratio: true
+  lexical_coherence: true  # ardisik cumleler arasi Jaccard icerik-kelime benzerligi
+
+# Kaynak-modele-ozgu (ai_raw) klise n-gram yogunlugu ve insan-tipik informal n-gram yogunlugu
+# (contrastive mining, scripts/mine_contrastive_lexicons.py ciktisi)
+lexicon:
+  ai_cliche_density: true
+  human_informality_density: true
 
 sentence_level:
   sentence_length_mean: true
@@ -34,6 +50,12 @@ sentence_level:
 readability:
   atesman: true
   bezirci_yilmaz: true
+
+# Regex-tabanli, lexicon gerektirmeyen ortografik duzensizlik ozellikleri
+orthographic:
+  punct_irregularity_rate: true
+  double_space_rate: true
+  post_punct_case_irregularity_rate: true
 
 anomaly:
   stylometric_anomaly_heatmap: true

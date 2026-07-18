@@ -10,3 +10,5 @@ figures_dir: outputs/figures
 reports_dir: outputs/reports
 
 hf_cache_dir: null  # null -> transformers varsayilani (HF_HOME env ile override edilebilir)
+
+lexicon_dir: data/processed/lexicons  # mine_contrastive_lexicons.py ciktisi (ai_cliche/human_informality n-gram JSON'lari)

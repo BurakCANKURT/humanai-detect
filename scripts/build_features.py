@@ -146,6 +146,27 @@ def _build_reference(human_samples: list[ProcessedSample]) -> dict:
     }
 
 
+def _load_lexicons(processed_dir, paths_cfg: dict) -> dict:
+    """scripts/mine_contrastive_lexicons.py ciktisi lexicon JSON'larini yukler.
+
+    Dosyalar yoksa (henuz madencilik yapilmamissa) bos kumeler doner -- ilgili
+    ozellikler aggregator.py'de 0.0 olarak hesaplanir, pipeline durmaz.
+    """
+    lexicon_dir = PROJECT_ROOT / paths_cfg.get("lexicon_dir", "data/processed/lexicons")
+    lexicons = {"ai_cliche": set(), "human_informality": set()}
+
+    ai_path = lexicon_dir / "ai_cliche_ngrams.json"
+    human_path = lexicon_dir / "human_informality_ngrams.json"
+    if ai_path.exists():
+        lexicons["ai_cliche"] = set(json.loads(ai_path.read_text(encoding="utf-8")).keys())
+    if human_path.exists():
+        lexicons["human_informality"] = set(json.loads(human_path.read_text(encoding="utf-8")).keys())
+
+    print(f"[lexicons] ai_cliche={len(lexicons['ai_cliche'])}, human_informality={len(lexicons['human_informality'])}"
+          + ("" if ai_path.exists() and human_path.exists() else " (scripts/mine_contrastive_lexicons.py henuz calistirilmamis)"))
+    return lexicons
+
+
 def _embed_all(
     samples: list[ProcessedSample],
     model_key: str,
@@ -218,6 +239,8 @@ def main() -> None:
     reference = _build_reference(human_samples)
     print(f"  referans hazir ({len(human_samples)} insan ornegi)")
 
+    lexicons = _load_lexicons(processed_dir, paths_cfg)
+
     # --- Asama 3: Stilometrik ozellikler ---
     all_samples: list[ProcessedSample] = []
     rows: list[dict] = []
@@ -230,7 +253,7 @@ def main() -> None:
         all_samples.extend(samples)
         print(f"[{label}] {len(samples)} ornek icin ozellik cikarimi basliyor...")
         for i, sample in enumerate(samples, 1):
-            feats = extract_all_features(sample, features_cfg, reference=reference)
+            feats = extract_all_features(sample, features_cfg, reference=reference, lexicons=lexicons)
             feats["sample_id"] = sample.id
             feats["label"] = sample.label
             rows.append(feats)
@@ -301,7 +324,11 @@ def main() -> None:
         if emb_path.exists():
             emb_named.append((model_key, pd.read_parquet(emb_path)))
 
-    fused_df = build_fused_dataframe(sty_df, emb_named, fusion_cfg)
+    # Scaler (standardize/PCA) da uzunluk-residualizasyonuyla ayni mantikla SADECE dev
+    # havuzundan fit edilmeli. sty_df, stylometric.parquet'ten (yukaridaki df'in disk
+    # round-trip'i) okundugu icin satir sirasi df ile ayni -- train_mask dogrudan gecerli.
+    assert len(sty_df) == len(df), "stylometric.parquet satir sayisi df ile uyusmuyor"
+    fused_df = build_fused_dataframe(sty_df, emb_named, fusion_cfg, train_mask=train_mask)
     write_parquet(fused_df, fused_path)
     n_feat = len(fused_df.columns) - 2
     print(f"[fusion] {len(fused_df)} ornek, {n_feat} toplam ozellik -> {fused_path}")

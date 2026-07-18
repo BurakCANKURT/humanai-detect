@@ -31,3 +31,13 @@ class ProcessedSample:
     # Istatistiksel/model tabanli ozellikler (Asama 3 icin hazir)
     perplexity: float = 0.0
     burstiness: float = 0.0
+
+    # Capraz-model perplexity orani (Binoculars-tarzi) -- perplexity / perplexity_ratio_model perplexity'si
+    perplexity_ratio: float = 1.0
+
+    # Token-rank / GLTR-tarzi ozellikler (causal LM ile hesaplanir)
+    mean_token_rank: float = 0.0
+    frac_rank_top1: float = 0.0
+    frac_rank_top5: float = 0.0
+    frac_rank_top10: float = 0.0
+    rank_entropy: float = 0.0

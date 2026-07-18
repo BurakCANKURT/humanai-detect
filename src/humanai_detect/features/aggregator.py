@@ -9,6 +9,11 @@ Referans istatistikleri (reference sozlugu):
     conjunction_density: float             — insan kumesinin ortalama baglac yogunlugu
 Referans verilmezse (None), ilgili ozellikler NaN olarak dondurulur
 (egitim sirasinda referans hesaplanip iletilecek).
+
+lexicons sozlugu (opsiyonel, scripts/mine_contrastive_lexicons.py ciktisi):
+    ai_cliche          : set[str]  — ai_raw korpusunda asiri temsil edilen n-gramlar
+    human_informality  : set[str]  — insan korpusunda asiri temsil edilen n-gramlar
+lexicons verilmezse ilgili yogunluk ozellikleri 0.0 doner (eslesecek n-gram yok).
 """
 
 from __future__ import annotations
@@ -21,7 +26,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from humanai_detect.preprocessing.schemas import ProcessedSample
 
-from . import discourse, lexical, readability, statistical, syntactic
+from . import discourse, lexical, lexicon, orthographic, readability, statistical, syntactic
 
 # Asama 3 feature vektorunde yer alacak sabit POS etiket listesi
 _POS_TAGS = ["NOUN", "VERB", "ADJ", "ADV", "PRON", "DET", "ADP", "AUX",
@@ -41,11 +46,13 @@ def extract_all_features(
     sample: "ProcessedSample",
     feature_config: dict,
     reference: dict | None = None,
+    lexicons: dict | None = None,
 ) -> dict[str, float]:
     """Tek bir ProcessedSample icin aktif ozellikleri hesaplayip dondurur.
 
     reference verilmezse referans gerektiren ozellikler (kl_div, depth_shift,
     conjunction_deviation) NaN doner — training pipeline'i bunu doldurur.
+    lexicons verilmezse n-gram yogunluk ozellikleri 0.0 doner.
     """
     feats: dict[str, float] = {}
     tokens = sample.tokens
@@ -80,8 +87,23 @@ def extract_all_features(
         feats["kl_div_word_freq"] = math.nan
     if stat_cfg.get("perplexity"):
         feats["perplexity"] = sample.perplexity
+    if stat_cfg.get("perplexity_ratio"):
+        feats["perplexity_ratio"] = sample.perplexity_ratio
     if stat_cfg.get("burstiness_index"):
         feats["burstiness"] = sample.burstiness
+
+    # --- Token-rank (GLTR-tarzi, causal LM ile preprocess asamasinda hesaplandi) ---
+    rank_cfg = feature_config.get("token_rank", {})
+    if rank_cfg.get("mean_rank"):
+        feats["mean_token_rank"] = sample.mean_token_rank
+    if rank_cfg.get("frac_rank_top1"):
+        feats["frac_rank_top1"] = sample.frac_rank_top1
+    if rank_cfg.get("frac_rank_top5"):
+        feats["frac_rank_top5"] = sample.frac_rank_top5
+    if rank_cfg.get("frac_rank_top10"):
+        feats["frac_rank_top10"] = sample.frac_rank_top10
+    if rank_cfg.get("rank_entropy"):
+        feats["rank_entropy"] = sample.rank_entropy
 
     # --- Sentence-level (istatistiksel alt kume) ---
     sent_cfg = feature_config.get("sentence_level", {})
@@ -124,6 +146,26 @@ def extract_all_features(
         )
     if dis_cfg.get("function_word_ratio"):
         feats["function_word_ratio"] = discourse.function_word_ratio(tokens, pos_tags)
+    if dis_cfg.get("lexical_coherence"):
+        feats["lexical_coherence"] = discourse.lexical_coherence(sentences)
+
+    # --- Lexicon (contrastive-mining n-gram yogunlugu) ---
+    lex_dens_cfg = feature_config.get("lexicon", {})
+    if lex_dens_cfg.get("ai_cliche_density"):
+        ai_lexicon = lexicons.get("ai_cliche", set()) if lexicons else set()
+        feats["ai_cliche_density"] = lexicon.ngram_density(tokens, ai_lexicon)
+    if lex_dens_cfg.get("human_informality_density"):
+        human_lexicon = lexicons.get("human_informality", set()) if lexicons else set()
+        feats["human_informality_density"] = lexicon.ngram_density(tokens, human_lexicon)
+
+    # --- Orthographic (regex-tabanli, model/lexicon gerektirmez) ---
+    ortho_cfg = feature_config.get("orthographic", {})
+    if ortho_cfg.get("punct_irregularity_rate"):
+        feats["punct_irregularity_rate"] = orthographic.punct_irregularity_rate(sample.cleaned_text)
+    if ortho_cfg.get("double_space_rate"):
+        feats["double_space_rate"] = orthographic.double_space_rate(sample.text)
+    if ortho_cfg.get("post_punct_case_irregularity_rate"):
+        feats["post_punct_case_irregularity_rate"] = orthographic.post_punct_case_irregularity_rate(sample.cleaned_text)
 
     # --- Readability ---
     read_cfg = feature_config.get("readability", {})
