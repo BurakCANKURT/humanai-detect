@@ -71,6 +71,10 @@ def main() -> None:
                          help="Egitilen modelleri outputs/models/_diag_<tag>.pkl olarak kaydet (kisa-metin tanisi icin)")
     parser.add_argument("--binary", action="store_true",
                          help="3 sinif yerine ikili (human vs ai_raw+ai_humanized birlesik 'ai') olc")
+    parser.add_argument("--input", default=None,
+                         help="fused.parquet yerine kullanilacak alternatif dosya (orn. ablation calismalari icin)")
+    parser.add_argument("--tag-suffix", default="",
+                         help="Cikti dosya/model adlarina eklenecek ek etiket (mevcut sonuclarin uzerine yazmamak icin, orn. '_ablation')")
     args = parser.parse_args()
 
     label_names = BINARY_LABEL_NAMES if args.binary else LABEL_NAMES
@@ -80,7 +84,9 @@ def main() -> None:
     models_cfg = load_yaml("models")
     processed_dir = PROJECT_ROOT / paths_cfg["processed_dir"]
 
-    fused_df = pd.read_parquet(processed_dir / "fused.parquet")
+    fused_path = PROJECT_ROOT / args.input if args.input else processed_dir / "fused.parquet"
+    print(f"[calib] girdi: {fused_path}")
+    fused_df = pd.read_parquet(fused_path)
     holdout_ids = set((processed_dir / "holdout_ids.txt").read_text(encoding="utf-8").splitlines())
 
     dev_df = fused_df[~fused_df["sample_id"].isin(holdout_ids)].reset_index(drop=True)
@@ -118,7 +124,7 @@ def main() -> None:
         model = train_final_model(X_dev, y_dev, "stacking", cfg)
 
         if args.save_models:
-            diag_tag = f"{tag}_binary" if args.binary else tag
+            diag_tag = f"{tag}_binary{args.tag_suffix}" if args.binary else f"{tag}{args.tag_suffix}"
             diag_path = PROJECT_ROOT / paths_cfg["models_dir"] / f"_diag_{diag_tag}.pkl"
             diag_path.parent.mkdir(parents=True, exist_ok=True)
             with open(diag_path, "wb") as f:
@@ -147,7 +153,7 @@ def main() -> None:
 
     out_dir = PROJECT_ROOT / paths_cfg["reports_dir"] / "cv_results"
     out_dir.mkdir(parents=True, exist_ok=True)
-    stage_tag = f"{args.stage}_binary" if args.binary else args.stage
+    stage_tag = f"{args.stage}_binary{args.tag_suffix}" if args.binary else f"{args.stage}{args.tag_suffix}"
     out_path = out_dir / f"calibration_before_after_{stage_tag}.json"
     out_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n[calib] -> {out_path}")

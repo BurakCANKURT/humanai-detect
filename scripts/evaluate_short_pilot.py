@@ -45,6 +45,15 @@ LABEL_MAP = {"human_short": "human", "ai_raw_short": "ai_raw", "ai_humanized_sho
 LABEL_NAMES = ["human", "ai_raw", "ai_humanized"]
 LABEL_TO_INT = {lbl: i for i, lbl in enumerate(LABEL_NAMES)}
 
+# 2026-07-18 oturumunda eklenen 5 ozellik ailesine ait sutunlar -- --ablation ile
+# bunlar cikarilip "yeni ozellikler olmadan bugunku (scaler-fix'li) pipeline ne veriyor"
+# sorusu izole edilir (bkz. proje notlari, ablation deneyi).
+NEW_FEATURES = [
+    "perplexity_ratio", "mean_token_rank", "frac_rank_top1", "frac_rank_top5", "frac_rank_top10",
+    "rank_entropy", "lexical_coherence", "ai_cliche_density", "human_informality_density",
+    "punct_irregularity_rate", "double_space_rate", "post_punct_case_irregularity_rate",
+]
+
 
 def _build_reference(interim_dir) -> dict:
     """build_features.py::_build_reference ile birebir ayni -- ANA human korpusundan."""
@@ -94,6 +103,9 @@ def _fit_train_zscore(arr: np.ndarray, train_mask: np.ndarray) -> tuple[np.ndarr
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="_diag_after_calibrated.pkl", help="outputs/models/ altindaki model dosyasi")
+    parser.add_argument("--ablation", action="store_true",
+                         help="5 yeni ozellik ailesini (12 sutun) cikarip ablation modeliyle degerlendir "
+                              "(fused_ablation.parquet uzerinde egitilmis bir model bekler)")
     args = parser.parse_args()
 
     paths_cfg = load_yaml("paths")
@@ -167,10 +179,20 @@ def main() -> None:
     main_sty_cols = [c for c in main_sty_df.columns if c not in meta_cols]
     main_emb_cols = [c for c in main_emb_df.columns if c not in meta_cols]
 
-    assert sty_cols_pilot == main_sty_cols or set(sty_cols_pilot) == set(main_sty_cols), (
+    if args.ablation:
+        main_sty_cols = [c for c in main_sty_cols if c not in NEW_FEATURES]
+        print(f"[short-pilot-eval] --ablation: {len(NEW_FEATURES)} yeni ozellik cikarildi, "
+              f"kalan stilometrik ozellik: {len(main_sty_cols)}")
+        expected_pilot_cols = set(sty_cols_pilot) - set(NEW_FEATURES)
+    else:
+        expected_pilot_cols = set(sty_cols_pilot)
+
+    assert expected_pilot_cols == set(main_sty_cols), (
         "kisa-pilot stilometrik ozellik kumesi ana egitimle uyusmuyor -- features.yaml degismis olabilir"
     )
-    # Ana sutun SIRASINI kullan (fused.parquet'teki sirayla birebir ayni olmali)
+    # Ana sutun SIRASINI kullan (fused.parquet'teki sirayla birebir ayni olmali) -- sty_df'te
+    # fazladan sutun olsa bile (orn. ablation'da NEW_FEATURES hesaplanmis ama kullanilmayacak)
+    # bu satir sadece main_sty_cols'u secer.
     sty_df = sty_df[["sample_id", "label"] + main_sty_cols]
 
     sty_mean, sty_std = _fit_train_zscore(main_sty_df[main_sty_cols].to_numpy(dtype=np.float32), main_train_mask)
@@ -182,8 +204,9 @@ def main() -> None:
 
     X_pilot = np.hstack([pilot_sty_std, pilot_emb_std]).astype(np.float32)
 
-    # fused.parquet'in GERCEK sutun sirasiyla dogrulama
-    fused_cols = [c for c in pd.read_parquet(processed_dir / "fused.parquet").columns if c not in meta_cols]
+    # fused.parquet'in (ya da ablation varyantinin) GERCEK sutun sirasiyla dogrulama
+    fused_ref_path = processed_dir / ("fused_ablation.parquet" if args.ablation else "fused.parquet")
+    fused_cols = [c for c in pd.read_parquet(fused_ref_path).columns if c not in meta_cols]
     expected_cols = main_sty_cols + [f"emb_berturk_{c}" for c in main_emb_cols]
     if fused_cols != expected_cols:
         print("[short-pilot-eval] UYARI: turetilen sutun sirasi fused.parquet ile FARKLI, "
@@ -240,7 +263,8 @@ def main() -> None:
         "overall_ai_confusion_pct": float(overall_ai_confusion * 100),
         "previous_baseline_confusion_pct": 83.0,
     }
-    out_path = out_dir / "short_pilot_eval.json"
+    out_name = "short_pilot_eval_ablation.json" if args.ablation else "short_pilot_eval.json"
+    out_path = out_dir / out_name
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n[short-pilot-eval] -> {out_path}")
 
