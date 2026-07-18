@@ -27,6 +27,7 @@ from humanai_detect.preprocessing import compute_perplexity, compute_token_rank_
 from humanai_detect.utils.io import read_jsonl
 
 LABELS = ["human", "ai_raw", "ai_humanized"]
+SHORT_LABELS = ["human_short", "ai_raw_short", "ai_humanized_short"]
 
 _NEW_FIELDS = ("perplexity_ratio", "mean_token_rank", "frac_rank_top1", "frac_rank_top5", "frac_rank_top10", "rank_entropy")
 
@@ -89,7 +90,7 @@ def augment_label(label: str, interim_dir, preprocessing_cfg: dict, limit: int |
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--label", choices=[*LABELS, "all"], default="all")
+    parser.add_argument("--label", choices=[*LABELS, *SHORT_LABELS, "all"], default="all")
     parser.add_argument("--input-dir", default=None, help="data/interim dizini (varsayilan: configs/paths.yaml)")
     parser.add_argument("--limit", type=int, default=None, help="Sinif basina bu oturumda en fazla kac kayit guncellenecek")
     args = parser.parse_args()
