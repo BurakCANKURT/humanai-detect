@@ -44,6 +44,12 @@ LENGTH_SENSITIVE_FEATURES = [
     "hapax_ratio",
     "entropy_1gram",
     "yule_k",
+    # 2026-07-18: 5 yeni ozellik ailesi eklenince olculdu (9479-orneklik train alt kumesi,
+    # bkz. proje notlari) -- perplexity_ratio (r=-0.46) ve rank_entropy (r=0.31) mevcut
+    # |r|>=0.30 esigini asiyor. double_space_rate (r=0.21) sinirda ama esigin altinda,
+    # bilerek DISARIDA birakildi.
+    "perplexity_ratio",
+    "rank_entropy",
 ]
 
 

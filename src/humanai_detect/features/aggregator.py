@@ -88,7 +88,13 @@ def extract_all_features(
     if stat_cfg.get("perplexity"):
         feats["perplexity"] = sample.perplexity
     if stat_cfg.get("perplexity_ratio"):
-        feats["perplexity_ratio"] = sample.perplexity_ratio
+        # log-oran kullanilir: ham oran (p1/p2) asiri carpik/heavy-tailed cikiyor (gozlemsel
+        # aralik ~0.0005-4.17), bu da length_residualize.py'nin dogrusal regresyonuyla
+        # uzunluk-confound'unu temizleyemiyordu (residual sonrasi r=0.65, HAM orandan (-0.46)
+        # bile kotu). log(oran) = log(p1)-log(p2) ayni bilgiyi tasir (Spearman monotonic-
+        # invariant, siralama degismez) ama residualizasyonun dogrusal varsayimina cok daha
+        # uygun bir olcekte -- ayni teknikle residual sonrasi r=0.10'a duser (bkz. proje notlari).
+        feats["perplexity_ratio"] = math.log(sample.perplexity_ratio) if sample.perplexity_ratio > 0 else 0.0
     if stat_cfg.get("burstiness_index"):
         feats["burstiness"] = sample.burstiness
 
