@@ -190,7 +190,11 @@ def _embed_all(
 
     cache_dir = None
     if emb_cfg.get("cache_enabled"):
-        cache_dir = PROJECT_ROOT / paths_cfg.get("processed_dir", "data/processed") / emb_cfg.get("cache_dir", "embedding_cache") / model_key
+        # DUZELTME (2026-07-19): emb_cfg["cache_dir"] configs/embeddings.yaml'da ZATEN
+        # tam yol ("data/processed/embedding_cache") -- processed_dir'i tekrar eklemek
+        # cache'i hic kullanilmayan cift-katli bir klasore ("data/processed/data/processed/...")
+        # yoniendiriyordu, bkz. proje notlari.
+        cache_dir = PROJECT_ROOT / emb_cfg.get("cache_dir", "data/processed/embedding_cache") / model_key
 
     embed_fn = embed_berturk if model_key == "berturk" else embed_roberta_tr
     out_path = processed_dir / f"embeddings_{model_key}.parquet"
