@@ -39,18 +39,13 @@ from humanai_detect.utils.io import read_jsonl  # noqa: E402
 
 ARTIFACTS_DIR = ARAYUZ_DIR / "artifacts"
 
-# 2026-07-18 oturumunda eklenen 5 ozellik ailesine ait sutunlar -- ablation deneyi
-# (bkz. scripts/evaluate_short_pilot.py) bunlarin katkisinin ana held-out sette
-# olcum-gurultusu seviyesinde oldugunu gosterdi, production modeli bu ozellikler
-# OLMADAN (35 stilometrik + 768 embedding = 803) egitildi. arayuz'un hesapladigi
-# ozellik kumesi de zaten bunlari hic icermiyordu (inference.py guncellenmemisti);
-# buradaki disaridan-birak islemi model/inference/artifact ucunun tutarli olmasini
-# saglar.
-NEW_FEATURES = [
-    "perplexity_ratio", "mean_token_rank", "frac_rank_top1", "frac_rank_top5", "frac_rank_top10",
-    "rank_entropy", "lexical_coherence", "ai_cliche_density", "human_informality_density",
-    "punct_irregularity_rate", "double_space_rate", "post_punct_case_irregularity_rate",
-]
+# 2026-07-18 oturumunda eklenen 5 ozellik ailesine ait sutunlar. Tek-ureticili (Qwen)
+# veride ablation ile katkilari olcum-gurultusu seviyesinde bulunmustu ve production
+# bir sure bu ozellikler OLMADAN (803 ozellik) egitildi. 2026-07-19 cok-ureticili
+# (GPT-4o-mini) topup sonrasi karar degisti: production artik bu 12 ozellik DAHIL
+# (815 ozellik) egitiliyor -- cross-generator veride katkilari henuz ayrica olculmedi,
+# ama disarida birakmak icin bir gerekce de kalmadi. Liste sadece referans icin tutuluyor.
+NEW_FEATURES: list[str] = []
 
 
 def build_reference() -> dict:
@@ -117,14 +112,14 @@ def build_scaler() -> tuple[dict, list[str]]:
     print(f"[scaler] stilometri: {len(sty_cols)} ozellik, embedding: {len(emb_cols)} boyut, "
           f"toplam: {len(feature_columns)} ozellik")
 
-    # fused_ablation.parquet ile karsilastirma (production modeli bu dosyayla egitildi)
-    fused_path = processed_dir / "fused_ablation.parquet"
+    # fused.parquet ile karsilastirma (production modeli bu dosyayla egitildi)
+    fused_path = processed_dir / "fused.parquet"
     if fused_path.exists():
         fused_cols = [c for c in pd.read_parquet(fused_path).columns if c not in meta_cols]
         if fused_cols == feature_columns:
-            print("[scaler] fused_ablation.parquet sutun sirasiyla birebir uyusuyor.")
+            print("[scaler] fused.parquet sutun sirasiyla birebir uyusuyor.")
         else:
-            print("[scaler] UYARI: fused_ablation.parquet sutun sirasi farkli! "
+            print("[scaler] UYARI: fused.parquet sutun sirasi farkli! "
                   f"(fused={len(fused_cols)} vs turetilen={len(feature_columns)})")
 
     return scaler, feature_columns

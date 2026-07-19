@@ -37,7 +37,7 @@ SHORT_LABELS = ["human_short", "ai_raw_short", "ai_humanized_short"]
 # 2026-07-19) -- GPT-4o-mini ile uretilen ayri bir ai_raw/ai_humanized havuzu, ana
 # min_tokens/max_tokens (30/850) ile AYNI kriterle islenir (farkli kalibrasyon confound
 # yaratmasin diye), sadece ayri dosya/klasor olarak tutulur.
-TOPUP_LABELS = ["ai_raw_openai", "ai_humanized_openai"]
+TOPUP_LABELS = ["ai_raw_openai", "ai_humanized_openai", "ai_raw_anthropic", "ai_humanized_anthropic"]
 
 
 _STANZA_WORD_LIMIT = 500  # Stanza depparse icin max kelime (hiz siniri)

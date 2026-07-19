@@ -110,13 +110,27 @@ def generate_with_gemini(prompt: str, model: str, api_key: str) -> str:
 
 
 def generate_with_anthropic(prompt: str, model: str, api_key: str) -> str:
-    """Anthropic Claude ile tek bir metin uretir."""
+    """Anthropic Claude ile tek bir metin uretir.
+
+    thinking bilerek disabled -- bu duz bir metin-uretim gorevi (akademik deneme yazimi),
+    akil yurutmeye ihtiyaci yok. Claude Sonnet 5'te thinking parametresi hic verilmezse
+    adaptive thinking OTOMATIK devreye giriyor (sessiz varsayilan degisikligi) ve gorunmeyen
+    ekstra output-token maliyeti dogurabiliyor -- bu, maliyeti hem daha yuksek hem daha
+    ongorulemez yapiyordu (15 orneklik pilotta beklenenden ~%50 daha pahaliya cikti).
+
+    max_tokens=8192 (eskiden 2048) -- ilk 49 ornekte (2026-07-19) max_tokens=2048'in
+    Turkce metinde ~%84 oraninda yariden CUMLE ORTASINDA kesilmeye yol actigi bulundu
+    (Turkce'nin agglutinatif yapisi/Claude tokenizer'i ~4+ token/kelime uretiyor, 2048
+    token ~450-480 kelimede tukeniyor, hedef 680/1058 ne olursa olsun). O 49 ornek
+    kullanilmadi, data/raw/_old_truncated_backup/'a tasindi.
+    """
     from anthropic import Anthropic
 
-    client = Anthropic(api_key=api_key)
+    client = Anthropic(api_key=api_key, timeout=90.0)
     response = client.messages.create(
         model=model,
-        max_tokens=2048,
+        max_tokens=8192,
+        thinking={"type": "disabled"},
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text

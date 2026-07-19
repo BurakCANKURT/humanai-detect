@@ -36,25 +36,33 @@ short_pilot:
 # aksi halde GPT-4o-mini (Qwen'den farkli olarak uzunluk talimatina gercekten uyabildigi icin)
 # insan/Qwen ile YENİ bir uzunluk uyumsuzlugu yaratip cozulen confound'u geri getirebilirdi.
 cross_generator_topup:
-  target_count: 1000
-  provider: openai
-  # 2026-07-19 KALIBRASYON DUZELTMESI: ilk 33 ornekte GPT-4o-mini'nin istenen kelime
-  # sayisinin sistematik olarak sadece ~%70'ini urettigi olculdu (Qwen'deki sert kapasite
-  # tavaninin aksine, dogrusal/tahmin edilebilir bir eksik-uyum). Hedefler 1/0.70 ~ 1.43x
-  # buyutuldu ki gercek cikti insan ortalamasina (~650 kelime) otursun. Eski (680/200/100/850)
-  # kalibrasyonuyla uretilen 33 ornek data/raw/_old_miscalibrated_backup/'a tasindi, kullanilmadi.
-  target_len_mean: 970
-  target_len_std: 285
-  target_len_min: 140
-  target_len_max: 1210
-  # 2026-07-19 IKINCI DUZELTME: concurrency=8 denendiginde OpenAI hesabinin GERCEK limitinin
-  # sadece 10 RPM oldugu bulundu ("Limit 10, Used 10" 429 hatasi) -- bu hesap seviyesinde sabit
-  # bir tavan, concurrency ile asilamaz. requests_per_minute=9 (guvenlik payi) + yeni sliding-window
-  # _RateLimiter (llm_generators.py) bu tavani asmadan, istek gecikmesi (~10-15sn) tavandan uzun
-  # oldugu icin max_concurrency=3 ile "hatti dolu tutup" gercek 9 RPM'e mumkun oldugunca yaklasir.
+  # 2026-07-19 KREDI TUKENENE KADAR URET: Kullanici hedefi "API key/kredi bitene kadar
+  # devam et" olarak belirledi (sabit 1000 degil) -- target_count bilerek yuksek (3000)
+  # tutuluyor, gercek durdurucu ANTHROPIC kredisinin tukenmesi (istekler basarisiz olmaya
+  # baslayinca calisma sonlandirilacak). checkpoint'li oldugu icin script istenildiginde
+  # (kredi bitince) guvenle durdurulabilir, kismi ilerleme kaybolmaz.
+  target_count: 3000
+  # 2026-07-19 GECERSIZ KALIBRASYON BULGUSU: ilk 49 ornek (hedef 680 sonra 1058) max_tokens=2048
+  # yuzunden ~%84 oraninda cumle ortasinda kesilmisti (bkz. generate_with_anthropic docstring,
+  # max_tokens artik 8192) -- o olcumler GECERSIZ, hedefi 680'e SIFIRLANDI, max_tokens duzeltmesi
+  # sonrasi YENIDEN (kucuk bir pilotla) olculup kalibre edilmeli.
+  provider: anthropic
+  target_len_mean: 680
+  target_len_std: 200
+  target_len_min: 100
+  target_len_max: 850
+  # Pilotta (concurrency=1, rpm=20) 15 istekte hic 429/rate-limit hatasi gorulmedi -- Anthropic
+  # hesabinin gercek tavani muhtemelen OpenAI'daki 10 RPM'den daha yuksek (tipik Tier 1 varsayilani
+  # ~50 RPM). Yine de asiri agresif gitmemek icin orta bir deger secildi; hata gorulurse dusurulur.
   max_concurrency: 2
-  requests_per_minute: 8
+  requests_per_minute: 30
   max_retries: 5
+
+# ESKI (GPT-4o-mini, openai) topup kalibrasyonu -- artik cross_generator_topup su an anthropic'e
+# isaret ediyor, ama bu degerler openai icin gecerliligini koruyor, provider tekrar openai'ya
+# cevrilirse (orn. ai_raw_openai hacmini artirmak icin) BU degerler kullanilmali, yukaridakiler
+# DEGIL: target_len_mean=970/std=285/min=140/max=1210 (GPT-4o-mini ~%70 eksik uretim duzeltmesi),
+# max_concurrency=2/requests_per_minute=8 (gercek hesap tavani 10 RPM olculmustu).
 
 llm_generators:
   prompts_file: configs/prompts.txt
@@ -68,8 +76,10 @@ llm_generators:
     model: gemini-2.5-flash
     api_key_env: GEMINI_API_KEY
   anthropic:
-    enabled: false  # ANTHROPIC_API_KEY .env'de bos; anahtar eklenince true yapilabilir
-    model: claude-3-5-sonnet
+    enabled: true   # 2026-07-19: 3. uretici olarak eklendi (canli testte Sonnet-yazimi metnin
+                     # %64'u yanlis siniflandirildigi bulundu, bkz. proje notlari)
+    model: claude-sonnet-5  # Haiku degil bilerek Sonnet secildi -- gosterilen basarisizlik
+                             # Sonnet-seviyesi yazimla oldu (Haiku'nun imzasi farkli olabilirdi)
     api_key_env: ANTHROPIC_API_KEY
   llama:
     enabled: false  # Ollama kaldirildi, transformers saglayicisi kullaniliyor
