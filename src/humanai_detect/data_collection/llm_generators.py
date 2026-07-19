@@ -7,7 +7,9 @@ alaninda belirtilir; API key'ler .env'den (config.get_api_key) okunur.
 from __future__ import annotations
 
 import random
+import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,36 @@ from .schemas import RawSample
 _HF_PIPELINE_CACHE: dict[str, Any] = {}
 
 _LOCAL_PROVIDERS = frozenset({"transformers", "llama"})
+
+
+class _RateLimiter:
+    """Kayan-pencere (sliding-window) rate limiter -- thread-safe, gercek RPM tavanini asmaz.
+
+    Onceki yaklasim (sabit sure uyu, istek SONRASI) hem yavas (gecikme+uyku ust uste
+    binerdi) hem de es zamanli (concurrent) cagrilarda hicbir korumasi yoktu -- 2026-07-19'da
+    OpenAI hesabinin gercek limiti (10 RPM, "Limit 10, Used 10" 429 hatasi) concurrency=8 ile
+    aninda asildi. Bu siniftaki acquire(), her cagriyi son 60 saniyedeki istek sayisi RPM
+    tavanini gecmeyecek sekilde bloklar -- tek thread'de de, ThreadPoolExecutor icinde de guvenli.
+    """
+
+    def __init__(self, requests_per_minute: float | None) -> None:
+        self.rpm = requests_per_minute
+        self._lock = threading.Lock()
+        self._timestamps: deque[float] = deque()
+
+    def acquire(self) -> None:
+        if not self.rpm:
+            return
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                while self._timestamps and now - self._timestamps[0] >= 60.0:
+                    self._timestamps.popleft()
+                if len(self._timestamps) < self.rpm:
+                    self._timestamps.append(now)
+                    return
+                wait_for = 60.0 - (now - self._timestamps[0]) + 0.05
+            time.sleep(wait_for)
 
 # Insan korpusunun GERCEK (3000 kayit, DergiPark harvester tamamlandiktan sonraki)
 # kelime sayisi dagilimi: ort=1750, std=487, aralik=30-2026
@@ -60,7 +92,7 @@ def generate_with_openai(prompt: str, model: str, api_key: str) -> str:
     """OpenAI (GPT-4) ile tek bir metin uretir."""
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key, timeout=60.0)
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
@@ -246,6 +278,11 @@ def generate_batch(
     rate_limit: dict | None = None,
     checkpoint_path: Path | None = None,
     start_index: int = 0,
+    target_len_mean: float | None = None,
+    target_len_std: float | None = None,
+    target_len_min: int = _TARGET_LEN_MIN,
+    target_len_max: int = _TARGET_LEN_MAX,
+    max_concurrency: int = 1,
     **provider_kwargs,
 ) -> list[RawSample]:
     """Belirtilen saglayici ile toplu ham-AI metin uretir ve RawSample listesine cevirir.
@@ -254,6 +291,18 @@ def generate_batch(
     start_index ile onceki bir calismanin kaldigi yerden devam edilebilir.
     provider_kwargs, secilen saglayicinin generate_with_* fonksiyonuna gerekli
     diger parametreleri (model/api_key veya endpoint/api_key) tasir.
+
+    target_len_mean/std verilirse (API saglayicilari icin, orn. openai/anthropic) her
+    prompt'a _with_length_instruction ile rastgele bir hedef kelime sayisi enjekte edilir
+    -- transformers yolundaki _sample_target_words mantigiyla ayni. Verilmezse (varsayilan,
+    None) eski davranis korunur: prompt hicbir degisiklik olmadan gonderilir (bu saglayicilar
+    tarihte hic gercek veri toplamada kullanilmadigi icin geriye donuk uyumluluk sorunu yok).
+
+    max_concurrency>1 (API saglayicilari icin) istekleri ThreadPoolExecutor ile paralel
+    gonderir -- bu is agindan/API gecikmesinden kaynaklanan (yerel GPU degil) darbogazi
+    onemli olcude azaltir (bkz. proje notlari, 2026-07-19: olculen gercek hiz ~12sn/ornek
+    sirali, GPU'nun hic devrede olmadigi bir API-cagrisi darbogazi -- Colab burada YARDIMCI
+    OLMAZ, cunku ayni ag gecikmesiyle calisir). Varsayilan (1) eski sirali davranisi korur.
     """
     import json
     from dataclasses import asdict as _asdict
@@ -276,19 +325,74 @@ def generate_batch(
     max_retries = rate_limit.get("max_retries", 3)
     requests_per_minute = rate_limit.get("requests_per_minute", 60)
     # Yerel sağlayıcılar (llama/ollama) için rate limit bekleme gereksiz
-    min_interval = 0.0 if provider in _LOCAL_PROVIDERS else (60.0 / requests_per_minute if requests_per_minute else 0.0)
+    limiter = _RateLimiter(None if provider in _LOCAL_PROVIDERS else requests_per_minute)
 
     retryer = Retrying(stop=stop_after_attempt(max_retries), wait=wait_exponential(multiplier=1, max=30))
 
     if checkpoint_path:
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _build_prompt(i: int) -> str:
+        prompt = prompts[i % len(prompts)]
+        if target_len_mean is not None and target_len_std is not None:
+            local_rng = random.Random(42 + i)
+            target_words = _sample_target_words(local_rng, target_len_mean, target_len_std, target_len_min, target_len_max)
+            prompt = _with_length_instruction(prompt, target_words)
+        return prompt
+
     samples: list[RawSample] = []
+
+    if max_concurrency > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        write_lock = threading.Lock()
+        done_count = 0
+
+        def _worker(i: int) -> tuple[int, str, str]:
+            prompt = _build_prompt(i)
+            limiter.acquire()
+            try:
+                text = retryer(generate_fn, prompt, **provider_kwargs).strip()
+            except Exception as exc:
+                print(f"  UYARI: indeks={i} icin kalici hata ({exc!r}), atlaniyor.", flush=True)
+                text = ""
+            return i, prompt, text
+
+        indices = list(range(start_index, start_index + target_count))
+        with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
+            futures = {pool.submit(_worker, i): i for i in indices}
+            for future in as_completed(futures):
+                i = futures[future]
+                _, prompt, text = future.result()
+                with write_lock:
+                    done_count += 1
+                    if text:
+                        sample = RawSample(
+                            id=f"ai_raw_{provider}_{i:04d}",
+                            text=text,
+                            label="ai_raw",
+                            source=provider,
+                            metadata={"prompt": prompt, "model": provider_kwargs.get("model", "")},
+                        )
+                        samples.append(sample)
+                        if checkpoint_path:
+                            with open(checkpoint_path, "a", encoding="utf-8") as f:
+                                f.write(json.dumps(_asdict(sample), ensure_ascii=False) + "\n")
+                        print(f"  [{done_count}/{target_count}] tamam — id={sample.id}", flush=True)
+                    else:
+                        print(f"  [{done_count}/{target_count}] UYARI: bos yanit (indeks={i}), atlaniyor.", flush=True)
+        return samples
+
     for i in range(start_index, start_index + target_count):
         local_i = i - start_index + 1
         print(f"  [{local_i}/{target_count}] {provider}: istek gonderiliyor (prompt #{i % len(prompts) + 1})...", flush=True)
-        prompt = prompts[i % len(prompts)]
-        text = retryer(generate_fn, prompt, **provider_kwargs).strip()
+        prompt = _build_prompt(i)
+        limiter.acquire()
+        try:
+            text = retryer(generate_fn, prompt, **provider_kwargs).strip()
+        except Exception as exc:
+            print(f"  UYARI: indeks={i} icin kalici hata ({exc!r}), atlaniyor.", flush=True)
+            text = ""
         if text:
             sample = RawSample(
                 id=f"ai_raw_{provider}_{i:04d}",
@@ -304,6 +408,4 @@ def generate_batch(
             print(f"  [{local_i}/{target_count}] tamam — {len(text)} karakter yazildi (id={sample.id})", flush=True)
         else:
             print(f"  [{local_i}/{target_count}] UYARI: bos yanit, atlaniyor.", flush=True)
-        if min_interval and local_i < target_count:
-            time.sleep(min_interval)
     return samples

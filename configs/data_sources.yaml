@@ -27,11 +27,41 @@ short_pilot:
   human_min_words: 5
   human_max_words: 30
 
+# Cok-ureticili genelleme takviyesi (bkz. scripts/collect_ai_raw_topup.py, proje notlari
+# 2026-07-19): Qwen2.5-7B tek-ureticisine asiri uyum bulundu (canlı testte Claude-yazimi
+# AI metni %97+ "human" cikti -- kl_div_word_freq/entropy_2gram gibi ozellikler Qwen'in
+# spesifik kelime-dagilim imzasini ogrenmis, genel "AI mi" kavramini degil). Cozum: GPT-4o-mini
+# ile ikinci bir uretici eklemek. target_len_* DEGERLERI BILEREK 1750 DEGIL -- insanin
+# rechunk edildigi gercek araligi (bkz. target_count_per_class altindaki not) hedefler;
+# aksi halde GPT-4o-mini (Qwen'den farkli olarak uzunluk talimatina gercekten uyabildigi icin)
+# insan/Qwen ile YENİ bir uzunluk uyumsuzlugu yaratip cozulen confound'u geri getirebilirdi.
+cross_generator_topup:
+  target_count: 1000
+  provider: openai
+  # 2026-07-19 KALIBRASYON DUZELTMESI: ilk 33 ornekte GPT-4o-mini'nin istenen kelime
+  # sayisinin sistematik olarak sadece ~%70'ini urettigi olculdu (Qwen'deki sert kapasite
+  # tavaninin aksine, dogrusal/tahmin edilebilir bir eksik-uyum). Hedefler 1/0.70 ~ 1.43x
+  # buyutuldu ki gercek cikti insan ortalamasina (~650 kelime) otursun. Eski (680/200/100/850)
+  # kalibrasyonuyla uretilen 33 ornek data/raw/_old_miscalibrated_backup/'a tasindi, kullanilmadi.
+  target_len_mean: 970
+  target_len_std: 285
+  target_len_min: 140
+  target_len_max: 1210
+  # 2026-07-19 IKINCI DUZELTME: concurrency=8 denendiginde OpenAI hesabinin GERCEK limitinin
+  # sadece 10 RPM oldugu bulundu ("Limit 10, Used 10" 429 hatasi) -- bu hesap seviyesinde sabit
+  # bir tavan, concurrency ile asilamaz. requests_per_minute=9 (guvenlik payi) + yeni sliding-window
+  # _RateLimiter (llm_generators.py) bu tavani asmadan, istek gecikmesi (~10-15sn) tavandan uzun
+  # oldugu icin max_concurrency=3 ile "hatti dolu tutup" gercek 9 RPM'e mumkun oldugunca yaklasir.
+  max_concurrency: 2
+  requests_per_minute: 8
+  max_retries: 5
+
 llm_generators:
   prompts_file: configs/prompts.txt
   openai:
-    enabled: false  # OPENAI_API_KEY .env'de bos; anahtar eklenince true yapilabilir
-    model: gpt-4-turbo
+    enabled: true   # 2026-07-19: cok-ureticili genelleme icin ikinci ai_raw kaynagi
+                     # (bkz. scripts/collect_ai_raw_topup.py) -- OPENAI_API_KEY .env'de dolu
+    model: gpt-4o-mini  # gpt-4-turbo'dan cok daha ucuz (~$0.15/$0.60 vs $10/$30 per 1M token)
     api_key_env: OPENAI_API_KEY
   gemini:
     enabled: false  # ucretsiz katman kota/kapasite sorunlari surekli oldugu icin kapatildi, llama (Ollama) kullaniliyor
