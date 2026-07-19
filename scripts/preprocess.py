@@ -33,6 +33,11 @@ from humanai_detect.utils.io import read_jsonl, write_jsonl
 
 LABELS = ["human", "ai_raw", "ai_humanized"]
 SHORT_LABELS = ["human_short", "ai_raw_short", "ai_humanized_short"]
+# Cok-ureticili genelleme takviyesi (bkz. scripts/collect_ai_raw_topup.py, proje notlari
+# 2026-07-19) -- GPT-4o-mini ile uretilen ayri bir ai_raw/ai_humanized havuzu, ana
+# min_tokens/max_tokens (30/850) ile AYNI kriterle islenir (farkli kalibrasyon confound
+# yaratmasin diye), sadece ayri dosya/klasor olarak tutulur.
+TOPUP_LABELS = ["ai_raw_openai", "ai_humanized_openai"]
 
 
 _STANZA_WORD_LIMIT = 500  # Stanza depparse icin max kelime (hiz siniri)
@@ -187,7 +192,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--label",
-        choices=[*LABELS, *SHORT_LABELS, "all"],
+        choices=[*LABELS, *SHORT_LABELS, *TOPUP_LABELS, "all"],
         default="all",
         help="Hangi sinif icin on isleme yapilacak",
     )
