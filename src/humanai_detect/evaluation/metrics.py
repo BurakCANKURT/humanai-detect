@@ -79,3 +79,56 @@ def format_metrics_report(metrics: dict[str, Any]) -> str:
     for lbl, score in metrics.get("per_class_f1", {}).items():
         lines.append(f"| {lbl} | {score:.4f} |")
     return "\n".join(lines)
+
+
+def compute_metrics_by_generator(
+    y_true: Any,
+    y_pred: Any,
+    sample_ids: Any,
+    y_proba: Any = None,
+    label_names: list[str] | None = None,
+) -> dict[str, Any]:
+    """sample_id'den cikarilan uretici (human/qwen/gpt4o_mini/claude_sonnet5) bazinda
+    ayri compute_metrics ceagirir.
+
+    Held-out sette tek bir toplam Accuracy/Macro-F1 raporlamak, model bu ureticileri
+    ne kadar farkli ogrendigini gizler (bkz. proje notlarindaki Qwen-ai_raw 0.794 vs
+    GPT-4o-mini-ai_raw 0.979 bulgusu) -- bu fonksiyon her `evaluate.py`/
+    `measure_calibration.py` calistirmasinda bu kirilimi otomatik uretmek icin var,
+    elle/ad-hoc hesaplamaya gerek kalmasin diye.
+    """
+    from humanai_detect.utils.generator_id import infer_generator
+
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    y_proba_arr = np.asarray(y_proba) if y_proba is not None else None
+    generators = np.array([infer_generator(sid) for sid in sample_ids])
+
+    result: dict[str, Any] = {}
+    for gen in sorted(set(generators)):
+        mask = generators == gen
+        gen_metrics = compute_metrics(
+            y_true[mask],
+            y_pred[mask],
+            y_proba=y_proba_arr[mask] if y_proba_arr is not None else None,
+            label_names=label_names,
+        )
+        result[gen] = {
+            "n": int(mask.sum()),
+            "accuracy": gen_metrics["accuracy"],
+            "macro_f1": gen_metrics["macro_f1"],
+            "per_class_f1": gen_metrics["per_class_f1"],
+        }
+    return result
+
+
+def format_generator_report(by_generator: dict[str, Any]) -> str:
+    """compute_metrics_by_generator ciktisini Markdown tablosu olarak bicimlendirir."""
+    lines = [
+        "### Uretici Bazli Kirilim\n",
+        "| Uretici | n | Accuracy | Macro-F1 |",
+        "|---------|---|----------|----------|",
+    ]
+    for gen, m in by_generator.items():
+        lines.append(f"| {gen} | {m['n']} | {m['accuracy']:.4f} | {m['macro_f1']:.4f} |")
+    return "\n".join(lines)

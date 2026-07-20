@@ -20,6 +20,7 @@ from sklearn.calibration import calibration_curve
 from sklearn.metrics import accuracy_score, f1_score, brier_score_loss
 
 from humanai_detect.config import PROJECT_ROOT, load_yaml
+from humanai_detect.evaluation.metrics import compute_metrics_by_generator, format_generator_report
 from humanai_detect.models.train import train_final_model
 
 LABEL_NAMES = ["human", "ai_raw", "ai_humanized"]
@@ -139,9 +140,17 @@ def main() -> None:
         brier = _multiclass_brier(y_hold, y_proba, label_names)
         max_stats = _max_proba_stats(y_proba)
         bins = _reliability_bins(y_hold, y_proba, label_names)
+        # Uretici-bazli kirilim --binary modda da calisir (infer_generator sinif
+        # semasindan bagimsiz, sadece sample_id'ye bakar); insan/AI toplam dogruluk
+        # yerine "hangi uretici hala zayif" sorusuna otomatik cevap verir.
+        by_generator = compute_metrics_by_generator(
+            y_hold, y_pred, hold_df["sample_id"], y_proba=y_proba, label_names=label_names
+        )
 
         print(f"[calib] {tag}: acc={acc:.4f} macro_f1={macro_f1:.4f} brier_mean={brier['mean']:.4f} "
               f"max_proba_mean={max_stats['mean']:.4f} frac>0.999={max_stats['frac_above_0.999']:.4f}")
+        for gen, m in by_generator.items():
+            print(f"  [uretici={gen}] n={m['n']} accuracy={m['accuracy']:.4f} macro_f1={m['macro_f1']:.4f}")
 
         results[tag] = {
             "accuracy": acc,
@@ -149,6 +158,7 @@ def main() -> None:
             "brier_score": brier,
             "max_proba_stats": max_stats,
             "reliability_bins": bins,
+            "by_generator": by_generator,
         }
 
     out_dir = PROJECT_ROOT / paths_cfg["reports_dir"] / "cv_results"
@@ -173,6 +183,8 @@ def main() -> None:
             f"| Oran(max-olasilik>0.999) | {b['max_proba_stats']['frac_above_0.999']:.4f} | "
             f"{a['max_proba_stats']['frac_above_0.999']:.4f} |"
         )
+        md_lines.append("")
+        md_lines.append(format_generator_report(a["by_generator"]))
         md_name = "calibration_before_after_binary.md" if args.binary else "calibration_before_after.md"
         (out_dir / md_name).write_text("\n".join(md_lines), encoding="utf-8")
 

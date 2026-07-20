@@ -19,7 +19,12 @@ import numpy as np
 import pandas as pd
 
 from humanai_detect.config import PROJECT_ROOT, load_yaml
-from humanai_detect.evaluation.metrics import compute_metrics, format_metrics_report
+from humanai_detect.evaluation.metrics import (
+    compute_metrics,
+    compute_metrics_by_generator,
+    format_generator_report,
+    format_metrics_report,
+)
 from humanai_detect.evaluation.visualization import (
     plot_confusion_matrix,
     plot_roc_curves,
@@ -67,10 +72,16 @@ def main() -> None:
     model_stem = model_path.stem
     report_dir = PROJECT_ROOT / paths_cfg["reports_dir"] / "cv_results"
     report_dir.mkdir(parents=True, exist_ok=True)
+    by_generator = compute_metrics_by_generator(
+        y, y_pred, df["sample_id"], y_proba=y_proba, label_names=LABEL_NAMES
+    )
+    report_text = format_metrics_report(metrics) + "\n\n" + format_generator_report(by_generator)
     report_path = report_dir / f"{model_stem}.md"
-    report_path.write_text(format_metrics_report(metrics), encoding="utf-8")
+    report_path.write_text(report_text, encoding="utf-8")
     print(f"[evaluate] Rapor -> {report_path}")
     print(f"  accuracy={metrics['accuracy']:.4f}  macro_f1={metrics['macro_f1']:.4f}")
+    for gen, m in by_generator.items():
+        print(f"  [uretici={gen}] n={m['n']} accuracy={m['accuracy']:.4f} macro_f1={m['macro_f1']:.4f}")
 
     # --- Gorseller ---
     fig_dir = PROJECT_ROOT / paths_cfg["figures_dir"]

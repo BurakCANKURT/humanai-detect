@@ -8,10 +8,30 @@ from typing import Any
 import numpy as np
 
 
+def _unwrap_calibrated_estimator(model: Any) -> Any:
+    """CalibratedClassifierCV sarmalayicisini soyup ic agac-tabanli estimator'i dondurur.
+
+    `_get_explainer` model tipini isimle tanidigi icin (xgb/catboost/...) bir
+    CalibratedClassifierCV(XGBClassifier(...)) hicbir anahtar kelimeyle eslesmiyor ve
+    KernelExplainer'a dusuyordu -- 815 ozellik x 3-sinif x calibrate edilmis modelde bu,
+    canli testte GERCEKTEN BITMEYEN (dakikalarca %100 CPU tuketen) bir hesaba yol acti.
+    Kalibrasyon (isotonic/sigmoid) sadece cikti olasiliklarini monoton yeniden olcekler,
+    agac yapisi/ozellik onemini degistirmez -- bu yuzden cv katlarindan ilkinin ic
+    estimator'ini kullanmak (tum katlari SHAP icin ayri ayri calistirip ortalamaktan
+    cok daha ucuz) pratikte kabul edilebilir bir yaklasim.
+    """
+    if type(model).__name__ != "CalibratedClassifierCV":
+        return model
+    inner = model.calibrated_classifiers_[0]
+    # sklearn >=1.4: '.estimator', daha eski surumler: '.base_estimator'
+    return getattr(inner, "estimator", None) or getattr(inner, "base_estimator", None) or model
+
+
 def _get_explainer(model: Any, X_background: np.ndarray):
     """Model tipine gore uygun SHAP explainer'i olusturur."""
     import shap
 
+    model = _unwrap_calibrated_estimator(model)
     model_type = type(model).__name__.lower()
     if any(k in model_type for k in ("xgb", "catboost", "lgbm", "randomforest", "gradientboost")):
         return shap.TreeExplainer(model)
