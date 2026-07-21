@@ -35,34 +35,56 @@ short_pilot:
 # rechunk edildigi gercek araligi (bkz. target_count_per_class altindaki not) hedefler;
 # aksi halde GPT-4o-mini (Qwen'den farkli olarak uzunluk talimatina gercekten uyabildigi icin)
 # insan/Qwen ile YENİ bir uzunluk uyumsuzlugu yaratip cozulen confound'u geri getirebilirdi.
+#
+# 2026-07-21 GUNCELLEME -- LOGO-CV sonrasi ANA HAVUZ BUYUTME (bkz. proje notlari, GUNCELLEME 9):
+# Qwen ~%72/GPT ~%23/Claude ~%4.8 uretici-payi dengesizligi bulundu, "Qwen egitim-disi" fold'u
+# en kotu sonucu verdi (katı %69.1). Claude buyutulmeyecek (kullanici karari, maliyet), bunun
+# yerine GPT-4o-mini payi 1000->2700'e cikariliyor (1700 YENI ornek, Qwen'in ~3108'lik ham payina
+# yaklasmasi icin). provider TEKRAR openai'ya cevrildi (anthropic topup'u GUNCELLEME 6'da
+# tamamlanip production'a alinmisti, o config'e artik gerek yok). target_len_* degerleri asagida
+# ESKI NOT'ta belgelenen, 2026-07-19'da GERCEK olcumle dogrulanmis GPT-4o-mini kalibrasyonu
+# (ort=970 hedefiyle gercek cikti ort=589-596 kelime, insana [~650] yakin) -- TEKRAR OLCMEYE
+# GEREK YOK, dogrudan kullanilabilir.
 cross_generator_topup:
-  # 2026-07-19 KREDI TUKENENE KADAR URET: Kullanici hedefi "API key/kredi bitene kadar
-  # devam et" olarak belirledi (sabit 1000 degil) -- target_count bilerek yuksek (3000)
-  # tutuluyor, gercek durdurucu ANTHROPIC kredisinin tukenmesi (istekler basarisiz olmaya
-  # baslayinca calisma sonlandirilacak). checkpoint'li oldugu icin script istenildiginde
-  # (kredi bitince) guvenle durdurulabilir, kismi ilerleme kaybolmaz.
-  target_count: 3000
-  # 2026-07-19 GECERSIZ KALIBRASYON BULGUSU: ilk 49 ornek (hedef 680 sonra 1058) max_tokens=2048
-  # yuzunden ~%84 oraninda cumle ortasinda kesilmisti (bkz. generate_with_anthropic docstring,
-  # max_tokens artik 8192) -- o olcumler GECERSIZ, hedefi 680'e SIFIRLANDI, max_tokens duzeltmesi
-  # sonrasi YENIDEN (kucuk bir pilotla) olculup kalibre edilmeli.
-  provider: anthropic
-  target_len_mean: 680
-  target_len_std: 200
-  target_len_min: 100
-  target_len_max: 850
-  # Pilotta (concurrency=1, rpm=20) 15 istekte hic 429/rate-limit hatasi gorulmedi -- Anthropic
-  # hesabinin gercek tavani muhtemelen OpenAI'daki 10 RPM'den daha yuksek (tipik Tier 1 varsayilani
-  # ~50 RPM). Yine de asiri agresif gitmemek icin orta bir deger secildi; hata gorulurse dusurulur.
+  target_count: 2700  # mevcut 1000 + yeni 1700 (script checkpoint'li, otomatik 1000'den devam eder)
+  provider: openai
+  # 2026-07-19'da PILOTLA DOGRULANMIS GPT-4o-mini kalibrasyonu (~%70 eksik-uretim duzeltmesi,
+  # bkz. proje notlari GUNCELLEME 3): gercek cikti ort=589-596 kelime, insan ortalamasina (650)
+  # yakin sonuc verdi. Degistirmeye GEREK YOK.
+  target_len_mean: 970
+  target_len_std: 285
+  target_len_min: 140
+  target_len_max: 1210
+  # 2026-07-19'da gercek hesap tavaninin 10 RPM oldugu olculmustu (varsayilan 60 sanilmisti) --
+  # asiri agresif gitmemek icin biraz altinda tutuluyor.
   max_concurrency: 2
-  requests_per_minute: 30
+  requests_per_minute: 8
   max_retries: 5
 
-# ESKI (GPT-4o-mini, openai) topup kalibrasyonu -- artik cross_generator_topup su an anthropic'e
-# isaret ediyor, ama bu degerler openai icin gecerliligini koruyor, provider tekrar openai'ya
-# cevrilirse (orn. ai_raw_openai hacmini artirmak icin) BU degerler kullanilmali, yukaridakiler
-# DEGIL: target_len_mean=970/std=285/min=140/max=1210 (GPT-4o-mini ~%70 eksik uretim duzeltmesi),
-# max_concurrency=2/requests_per_minute=8 (gercek hesap tavani 10 RPM olculmustu).
+# Kisa-metin (5-30 kelime) GPT-4o-mini takviyesi (bkz. scripts/collect_ai_raw_openai_short.py,
+# proje notlari GUNCELLEME 9, veri boslugu #2): data/raw/ai_raw_short/ (short_pilot bolumu,
+# asagida) SU AN %100 Qwen -- kisa metinde de tek-uretici asiri uyum riski var. Bu blok mevcut
+# 300-Qwen-only kisa havuzunu GPT ile CESITLENDIRIR (yerine gecmez, ustune eklenir).
+#
+# ONEMLI -- UZUNLUK KALIBRASYONU HENUZ DOGRULANMADI: yukaridaki ana-havuz kalibrasyonu (~970
+# hedef -> ~590 gercek, oran~0.61) UZUN metinde olculdu; GPT-4o-mini'nin COK KISA (5-30 kelime)
+# hedefte ayni oranda mi eksik-uretecegi BILINMIYOR (kisa hedefte oransal sapma farkli/daha
+# ongorulemez olabilir -- bkz. Qwen/GPT-4o-mini karsilastirmasindaki "target_len_mean=1750 asla
+# ulasilamadi" tuzagiyla ayni kategori risk). ZORUNLU: tam 300'u calistirmadan once KUCUK bir
+# pilot (orn. --target-count 20) ile gercek kelime sayisi olculup asagidaki target_len_mean/std
+# gerekirse yeniden kalibre edilmeli -- aksi halde insan-short (5-30 kelime) ile YENİ bir uzunluk
+# uyumsuzlugu yaratma riski var (bkz. short_pilot bolumundeki 5-30 araligi).
+cross_generator_topup_short:
+  target_count: 300
+  # short_pilot bolumundeki human/Qwen kisa-metin hedefiyle AYNI (5-30 kelime) -- pilot sonrasi
+  # gerekirse buyutulecek (undershoot bulunursa).
+  target_len_mean: 15
+  target_len_std: 6
+  target_len_min: 5
+  target_len_max: 30
+  max_concurrency: 2
+  requests_per_minute: 8
+  max_retries: 5
 
 llm_generators:
   prompts_file: configs/prompts.txt

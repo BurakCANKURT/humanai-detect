@@ -32,12 +32,25 @@ from humanai_detect.preprocessing import (
 from humanai_detect.utils.io import read_jsonl, write_jsonl
 
 LABELS = ["human", "ai_raw", "ai_humanized"]
-SHORT_LABELS = ["human_short", "ai_raw_short", "ai_humanized_short"]
+# ai_raw_openai_short/ai_humanized_openai_short (bkz. collect_ai_raw_openai_short.py,
+# proje notlari 2026-07-21 GUNCELLEME 9, veri boslugu #2 -- kisa-metin havuzu SU AN
+# %100 Qwen) diger short etiketlerle AYNI kisa kriterle (--min-tokens 5 --max-tokens 30)
+# calistirilmali, TOPUP_LABELS'taki (30/850) kriterle DEGIL.
+SHORT_LABELS = [
+    "human_short", "ai_raw_short", "ai_humanized_short",
+    "ai_raw_openai_short", "ai_humanized_openai_short",
+]
 # Cok-ureticili genelleme takviyesi (bkz. scripts/collect_ai_raw_topup.py, proje notlari
 # 2026-07-19) -- GPT-4o-mini ile uretilen ayri bir ai_raw/ai_humanized havuzu, ana
 # min_tokens/max_tokens (30/850) ile AYNI kriterle islenir (farkli kalibrasyon confound
 # yaratmasin diye), sadece ayri dosya/klasor olarak tutulur.
-TOPUP_LABELS = ["ai_raw_openai", "ai_humanized_openai", "ai_raw_anthropic", "ai_humanized_anthropic"]
+# "human_backtranslated" (bkz. scripts/humanize_human_topup.py, proje notlari 2026-07-21,
+# DAMAGE makalesi) de AYNI (30/850) kriterle islenir -- kaynagi zaten ana human havuzu,
+# etiketi de "human" (yeni sinif DEGIL), sadece dosya/klasoru ayri.
+TOPUP_LABELS = [
+    "ai_raw_openai", "ai_humanized_openai", "ai_raw_anthropic", "ai_humanized_anthropic",
+    "human_backtranslated",
+]
 
 
 _STANZA_WORD_LIMIT = 500  # Stanza depparse icin max kelime (hiz siniri)

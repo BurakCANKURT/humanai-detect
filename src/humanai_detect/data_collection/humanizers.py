@@ -86,6 +86,33 @@ def humanize_with_gemini(text: str, model: str, api_key: str) -> str:
     return response.text or ""
 
 
+def humanize_with_openai(text: str, model: str, api_key: str, **length_kwargs) -> str:
+    """GPT-4o-mini ile bir ai_raw metnini otomatik humanize eder (prompt-tabanli yeniden yazim,
+    back-translation DEGIL).
+
+    Eklenme sebebi (bkz. proje notlari, 2026-07-21): kisa-metin (5-30 kelime) havuzunda
+    back-translation'in neredeyse hic degisiklik yapmadigi olculdu (raw<->humanized char-benzerligi
+    ort=0.854, ana havuzdaki ort=0.17-0.26'nin cok uzerinde) -- round-trip cevirinin kisa/tek
+    cumlelik metinde neredeyse tersine-cevrilebilir olmasi. Kisa-metin havuzu icin bu fonksiyon
+    kullanilir (bkz. scripts/humanize_short_openai.py), ana havuz icin back-translation
+    (humanize_with_backtranslation) degismeden kullanilmaya devam eder (orada ayrim yeterliydi).
+
+    length_kwargs: _sample_target_words'e dogrudan gecilir (mean/std/min_words/max_words) --
+    kisa-metin cagrisinda ZORUNLU olarak short_pilot'un 5-30 kelime araligiyla override edilmeli,
+    aksi halde modulun varsayilan (uzun-form, ort=1750) hedefi kullanilir.
+    """
+    from openai import OpenAI
+    from .llm_generators import _sample_target_words
+
+    client = OpenAI(api_key=api_key, timeout=60.0)
+    word_count = _sample_target_words(random.Random(), **length_kwargs)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": _HUMANIZE_PROMPT_TEMPLATE.format(text=text, word_count=word_count)}],
+    )
+    return response.choices[0].message.content or ""
+
+
 def humanize_with_llama(text: str, model: str, endpoint: str, api_key: str | None = None) -> str:
     """Yerel/self-hosted bir LLM (orn. Ollama) ile bir ai_raw metnini otomatik humanize eder.
 
@@ -129,6 +156,7 @@ _LLM_HUMANIZERS = {
     "gemini": humanize_with_gemini,
     "llama": humanize_with_llama,
     "transformers": humanize_with_transformers,
+    "openai": humanize_with_openai,
 }
 
 _LOCAL_PROVIDERS = frozenset({"transformers", "llama", "backtranslate"})
@@ -194,7 +222,15 @@ def _humanize_batch_backtranslation(
     tr_en_model: str = "Helsinki-NLP/opus-mt-tc-big-tr-en",
     en_tr_model: str = "Helsinki-NLP/opus-mt-tc-big-en-tr",
     device: str = "auto",
+    output_label: str = "ai_humanized",
+    id_prefix: str = "ai_humanized_backtranslate",
 ) -> list[RawSample]:
+    """output_label/id_prefix (bkz. proje notlari, 2026-07-21 -- DAMAGE makalesindeki
+    'humanization invariance' bulgusu): varsayilan olarak ai_raw->ai_humanized icin
+    kullanilir, ama AYNI fonksiyon insan metnini de back-translation'dan gecirip
+    label DEGISTIRMEDEN ("human") augmentasyon olarak eklemek icin de kullanilabilir
+    (bkz. scripts/humanize_human_topup.py) -- model boylece back-translation'in
+    kendisinin bir AI imzasi OLMADIGINI, sadece ceviri artigini ogrenir."""
     from dataclasses import asdict
 
     if checkpoint_path:
@@ -211,9 +247,9 @@ def _humanize_batch_backtranslation(
             print(f"  UYARI: bos yanit (ornek={ai_raw_sample.id}), atlaniyor.", flush=True)
             continue
         sample = RawSample(
-            id=f"ai_humanized_backtranslate_{ai_raw_sample.id}",
+            id=f"{id_prefix}_{ai_raw_sample.id}",
             text=text,
-            label="ai_humanized",
+            label=output_label,
             source="backtranslate",
             metadata={
                 "original_id": ai_raw_sample.id,

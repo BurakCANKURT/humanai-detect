@@ -63,7 +63,9 @@ def _build_groups(all_samples: list[ProcessedSample]) -> pd.DataFrame:
 
     Amac: StratifiedGroupKFold ile ayni kaynak dokumandan/prompt'tan gelen orneklerin
     train/validation arasinda bolunmesini (leakage) onlemek.
-      - human       : DergiPark ise oai_id, degilse kaynak dosya adi (filename).
+      - human       : DergiPark ise oai_id, degilse kaynak dosya adi (filename) -- back-translate
+                      edilmis insan augmentasyonu (metadata.original_id) kaynak belgenin grubunu
+                      miras alir (bkz. scripts/humanize_human_topup.py, 2026-07-21).
       - ai_raw      : uretimde kullanilan prompt metni (sinirli sayida sablon var).
       - ai_humanized: eslesen ai_raw orneginin (metadata.original_id) grubunu miras alir.
 
@@ -81,14 +83,32 @@ def _build_groups(all_samples: list[ProcessedSample]) -> pd.DataFrame:
         topic = prompt_to_topic.setdefault(prompt, f"ai_topic_{len(prompt_to_topic):02d}")
         ai_raw_topic_by_id[s.id] = topic
 
+    # Insan augmentasyonu (back-translate edilmis "human" ornekleri, bkz.
+    # scripts/humanize_human_topup.py) kaynak belgenin grubunu miras alabilsin diye,
+    # ONCE gercek (augmentasyon OLMAYAN) insan belgelerinin gruplarini hesapla.
+    human_group_by_id: dict[str, str] = {}
+    for s in all_samples:
+        if s.label != "human":
+            continue
+        md = s.metadata or {}
+        if "original_id" in md:
+            continue  # bu zaten bir augmentasyon, asagida ikinci geciste cozulecek
+        if "oai_id" in md:
+            human_group_by_id[s.id] = f"human_doc_oai_{md['oai_id']}"
+        elif "filename" in md:
+            human_group_by_id[s.id] = f"human_doc_file_{md['filename']}"
+        else:
+            human_group_by_id[s.id] = f"human_doc_{s.id}"
+
     prelim: dict[str, str] = {}
     for s in all_samples:
         md = s.metadata or {}
         if s.label == "human":
-            if "oai_id" in md:
-                group_id = f"human_doc_oai_{md['oai_id']}"
-            elif "filename" in md:
-                group_id = f"human_doc_file_{md['filename']}"
+            orig_id = md.get("original_id")
+            if orig_id is not None and orig_id in human_group_by_id:
+                group_id = human_group_by_id[orig_id]
+            elif s.id in human_group_by_id:
+                group_id = human_group_by_id[s.id]
             else:
                 group_id = f"human_doc_{s.id}"  # tekil (kaynak bilgisi yok)
         elif s.label == "ai_raw":
