@@ -340,6 +340,7 @@ def humanize_batch_llm(
     rate_limit: dict | None = None,
     checkpoint_path: Path | None = None,
     start_index: int = 0,
+    max_concurrency: int = 1,
     **provider_kwargs,
 ) -> list[RawSample]:
     """ai_raw orneklerini bir LLM (orn. Gemini/Ollama) ile otomatik humanize eder, manuel dosya gerektirmez.
@@ -347,6 +348,14 @@ def humanize_batch_llm(
     checkpoint_path : her ornek uretilir uretilmez bu dosyaya JSON satiri eklenir (yeniden baslama destegi).
     start_index     : checkpoint'ten devam ederken atlanan ornek sayisi.
     provider_kwargs : secilen saglayicinin humanize_with_* fonksiyonuna gerekli parametreler.
+
+    max_concurrency>1 (API saglayicilari icin): istekleri ThreadPoolExecutor ile paralel
+    gonderir. Eklenme sebebi (bkz. proje notlari, 2026-07-25): uzun-metin (~650-1000 kelime)
+    humanize cagrilarinda gercek darbogaz rate-limit degil, GPT-4o-mini'nin UZUN cikti
+    URETME SURESI (~15-25sn/cagri) -- sirali calisirken gozlemlenen gercek hiz sadece
+    ~2 ornek/dakika (2812 ornek icin ~23 saat), 8-10 RPM varsayimiyla tahmin edilen ~5
+    saatin cok uzerinde. generate_batch'teki (llm_generators.py) ayni deseni kullanir
+    (_RateLimiter, gercek RPM tavanini asmayan thread-safe kayan-pencere limiter).
     """
     # Transformers için doğrudan batch inference kullan
     if provider == "transformers":
@@ -365,12 +374,66 @@ def humanize_batch_llm(
     rate_limit = rate_limit or {}
     max_retries = rate_limit.get("max_retries", 3)
     requests_per_minute = rate_limit.get("requests_per_minute", 60)
-    # Yerel sağlayıcılar (llama/ollama) için rate limit bekleme gereksiz
-    min_interval = 0.0 if provider in _LOCAL_PROVIDERS else (60.0 / requests_per_minute if requests_per_minute else 0.0)
     retryer = Retrying(stop=stop_after_attempt(max_retries), wait=wait_exponential(multiplier=1, max=30))
 
     total = len(ai_raw_samples)
-    samples: list[RawSample] = []
+    remaining = ai_raw_samples[start_index:]
+
+    if max_concurrency > 1 and provider not in _LOCAL_PROVIDERS:
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        from .llm_generators import _RateLimiter
+
+        limiter = _RateLimiter(requests_per_minute)
+        write_lock = threading.Lock()
+        done_count = 0
+        samples: list[RawSample] = []
+
+        def _worker(idx: int, ai_raw_sample: RawSample) -> tuple[int, RawSample, str]:
+            limiter.acquire()
+            try:
+                text = retryer(humanize_fn, ai_raw_sample.text, **provider_kwargs).strip()
+            except Exception as exc:
+                print(f"  UYARI: id={ai_raw_sample.id} icin kalici hata ({exc!r}), atlaniyor.", flush=True)
+                text = ""
+            return idx, ai_raw_sample, text
+
+        with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
+            futures = {
+                pool.submit(_worker, start_index + j, s): start_index + j
+                for j, s in enumerate(remaining)
+            }
+            for future in as_completed(futures):
+                idx, ai_raw_sample, text = future.result()
+                with write_lock:
+                    done_count += 1
+                    if text:
+                        sample = RawSample(
+                            id=f"ai_humanized_{provider}_{ai_raw_sample.id}",
+                            text=text,
+                            label="ai_humanized",
+                            source=provider,
+                            metadata={
+                                "original_id": ai_raw_sample.id,
+                                "original_source": ai_raw_sample.source,
+                                "model": provider_kwargs.get("model", ""),
+                            },
+                        )
+                        samples.append(sample)
+                        if checkpoint_path is not None:
+                            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                            with checkpoint_path.open("a", encoding="utf-8") as fp:
+                                from dataclasses import asdict
+                                fp.write(json.dumps(asdict(sample), ensure_ascii=False) + "\n")
+                        print(f"[{done_count}/{len(remaining)}] tamam — id={sample.id}", flush=True)
+                    else:
+                        print(f"[{done_count}/{len(remaining)}] UYARI: bos yanit (id={ai_raw_sample.id}), atlaniyor.", flush=True)
+        return samples
+
+    # Yerel sağlayıcılar (llama/ollama) için rate limit bekleme gereksiz
+    min_interval = 0.0 if provider in _LOCAL_PROVIDERS else (60.0 / requests_per_minute if requests_per_minute else 0.0)
+    samples = []
     for i, ai_raw_sample in enumerate(ai_raw_samples[start_index:], start=start_index):
         global_num = i + 1
         print(f"[{global_num}/{total}] {provider}: humanize isleniyor (ornek #{global_num})...")

@@ -84,6 +84,7 @@ def main() -> None:
         rate_limit=rate_limit,
         checkpoint_path=out_path,
         start_index=len(existing),
+        max_concurrency=data_sources_cfg.get("cross_generator_topup", {}).get("max_concurrency", 3),
         model=provider_cfg["model"],
         api_key=get_api_key(provider_cfg["api_key_env"]),
         mean=TARGET_LEN_MEAN,
